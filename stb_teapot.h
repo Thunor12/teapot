@@ -128,33 +128,6 @@ extern "C"
         return TEAPOT_UNKNOWN;
     }
 
-    static void parse_request_line(const char *buf, teapot_request *req)
-    {
-        const char *space1 = strchr(buf, ' ');
-        if (!space1)
-        {
-            req->method = TEAPOT_UNKNOWN;
-            req->path = "";
-            return;
-        }
-        req->method = parse_method(buf);
-        const char *space2 = strchr(space1 + 1, ' ');
-        if (!space2)
-        {
-            req->path = "";
-            return;
-        }
-        static char path_buf[256];
-        size_t len = space2 - (space1 + 1);
-        if (len >= sizeof(path_buf))
-            len = sizeof(path_buf) - 1;
-        memcpy(path_buf, space1 + 1, len);
-        path_buf[len] = '\0';
-        req->path = path_buf;
-        req->body = NULL;
-        req->body_length = 0;
-    }
-
     // --------------------------
     // Find matching route
     // --------------------------
@@ -185,6 +158,10 @@ extern "C"
             return 1;
         }
 
+        // TODO
+        // int opt = 1;
+        // setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
         struct sockaddr_in addr = {0};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(server->port);
@@ -193,15 +170,18 @@ extern "C"
         if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
         {
             perror("bind");
-            return 1;
-        }
-        if (listen(sock, 5) < 0)
-        {
-            perror("listen");
+            teapot_close(sock);
             return 1;
         }
 
-        printf("Server listening on port %d...\n", server->port);
+        if (listen(sock, 8) < 0)
+        {
+            perror("listen");
+            teapot_close(sock);
+            return 1;
+        }
+
+        printf("🫖 stb_teapot listening on port %d\n", server->port);
 
         while (1)
         {
@@ -212,13 +192,43 @@ extern "C"
                 continue;
             }
 
-            char buffer[1024] = {0};
+            char buffer[1024 * 8];
             int received = teapot_read(client, buffer, sizeof(buffer) - 1);
             if (received > 0)
             {
                 buffer[received] = '\0';
-                teapot_request req;
-                parse_request_line(buffer, &req);
+
+                // --- Parse request line ---
+                char method_buf[8];
+                char path_buf[512];
+
+                sscanf(buffer, "%7s %511s", method_buf, path_buf);
+                int method = parse_method(method_buf);
+
+                // --- Parse Content-Length ---
+                size_t content_length = 0;
+                const char *cl = strstr(buffer, "Content-Length:");
+                if (cl)
+                {
+                    sscanf(cl, "Content-Length: %zu", &content_length);
+                }
+
+                // --- Find start of body ---
+                const char *body_start = strstr(buffer, "\r\n\r\n");
+                const char *body = "";
+                if (body_start)
+                {
+                    body_start += 4;
+                    body = body_start;
+                }
+
+                teapot_request req = {
+                    .method = method,
+                    .path = path_buf,
+                    .body = body,
+                    .body_length = strlen(body),
+                };
+
                 teapot_handler handler = teapot_find_handler(server, &req);
                 teapot_response resp;
                 if (handler)
