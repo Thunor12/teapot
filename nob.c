@@ -31,6 +31,7 @@ static int compile_exe(const char **source_files, size_t src_count, const char *
 
     nob_cc_flags(&cmd);
     nob_cmd_append(&cmd, "-O2");
+    nob_cmd_append(&cmd, "-g");
 
     nob_cc_output(&cmd, output_file);
 
