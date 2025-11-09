@@ -7,6 +7,7 @@
 // --------------------------
 teapot_response hello_handler(const teapot_request *req)
 {
+    (void)req;
     return (teapot_response){200, "Hello Teapot\n"};
 }
 

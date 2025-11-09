@@ -11,17 +11,24 @@
 #define TEST_DIR "./tests/"
 
 #ifdef _WIN32
-#define LINK_FLAGS "-lws2_32"
+#define LINK_FLAGS "-O2", "-lws2_32"
 #else
-#define LINK_FLAGS ""
+#define LINK_FLAGS "-O2"
 #endif
+
+Nob_Procs procs = {0};
 
 static int compile_exe(const char **source_files, size_t src_count, const char *output_file)
 {
     int ret = 0;
     Nob_Cmd cmd = {0};
 
+#ifdef _WIN32
     nob_cmd_append(&cmd, CC);
+#else
+    nob_cc(&cmd);
+#endif
+
     nob_cc_flags(&cmd);
 
     nob_cc_output(&cmd, output_file);
@@ -36,11 +43,12 @@ static int compile_exe(const char **source_files, size_t src_count, const char *
     if (!nob_needs_rebuild(output_file, source_files, src_count))
     {
         nob_log(NOB_INFO, "%s up to date", output_file);
-        ret = 1;
+        ret = 0;
         goto defer;
     }
 
-    if (!nob_cmd_run(&cmd))
+    // if (!nob_cmd_run(&cmd))
+    if (!nob_cmd_run(&cmd, .async = &procs))
     {
         ret = 1;
         goto defer;
@@ -52,28 +60,34 @@ defer:
 }
 
 const char *tests[] = {
-    TEST_DIR "low_level_test.c",
-    TEST_DIR "low_level_test_2.c",
     TEST_DIR "low_level_test_stb_teapot.c",
 };
 
 static int compile_tests(const char **tests, size_t test_count)
 {
     int ret = 0;
+    Nob_String_Builder sb = {0};
 
     for (size_t i = 0; i < test_count; i++)
     {
+        char temp[260] = {0};
+        memset(sb.items, 0, sb.count);
+        sb.count = 0;
+
         const char *test_source = tests[i];
         const char *test_name = nob_path_name(test_source);
-        char output_path[MAX_PATH];
+        sprintf(temp, "%s", test_name);
+
+        char *exe = strtok(temp, ".c");
+
+        nob_sb_appendf(&sb, BUILD_DIR "%s", exe);
 
 #ifdef _WIN32
-        snprintf(output_path, sizeof(output_path), "%s%s.exe", BUILD_DIR, test_name);
-#else
-        snprintf(output_path, sizeof(output_path), "%s%s", BUILD_DIR, test_name);
+        nob_sb_append_cstr(&sb, ".exe");
 #endif
+        nob_sb_append_null(&sb);
 
-        if (0 != compile_exe(&test_source, 1, output_path))
+        if (0 != compile_exe(&test_source, 1, sb.items))
         {
             ret = 1;
             goto defer;
@@ -81,19 +95,36 @@ static int compile_tests(const char **tests, size_t test_count)
     }
 
 defer:
+    nob_procs_flush(&procs);
+    nob_sb_free(sb);
     return ret;
 }
 
 int main(int argc, char **argv)
 {
+    int ret = 0;
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     nob_mkdir_if_not_exists(BUILD_DIR);
 
-    if (0 != compile_tests(tests, sizeof(tests) / sizeof(tests[0])))
+    nob_shift_args(&argc, &argv);
+    for (size_t i = 1; i <= argc; i++)
     {
-        return 1;
+        char *cmd_arg = nob_shift_args(&argc, &argv);
+
+        if (0 == strcmp(cmd_arg, "clean"))
+        {
+            nob_log(NOB_INFO, "Cleaning...");
+            nob_delete_file(BUILD_DIR);
+            goto defer;
+        }
     }
 
-    return 0;
+    if (0 != compile_tests(tests, NOB_ARRAY_LEN(tests)))
+    {
+        ret = 1;
+    }
+
+defer:
+    return ret;
 }
