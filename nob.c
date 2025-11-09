@@ -30,6 +30,7 @@ static int compile_exe(const char **source_files, size_t src_count, const char *
 #endif
 
     nob_cc_flags(&cmd);
+    nob_cmd_append(&cmd, "-O2");
 
     nob_cc_output(&cmd, output_file);
 
@@ -107,7 +108,9 @@ int main(int argc, char **argv)
 
     nob_mkdir_if_not_exists(BUILD_DIR);
 
-    nob_shift_args(&argc, &argv);
+    nob_shift_args(&argc, &argv); // Ignore program name
+
+    // Parse args
     for (size_t i = 1; i <= argc; i++)
     {
         char *cmd_arg = nob_shift_args(&argc, &argv);
