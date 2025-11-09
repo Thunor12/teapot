@@ -144,6 +144,47 @@ extern "C"
         return NULL;
     }
 
+    static int parse_request(char *buffer, size_t size, teapot_request *req)
+    {
+        // --- Parse request line ---
+        char method_buf[8];
+        char path_buf[512];
+
+        sscanf(buffer, "%7s %511s", method_buf, path_buf);
+        int method = parse_method(method_buf);
+
+        if (method == TEAPOT_UNKNOWN)
+        {
+            return -1;
+        }
+
+        // --- Parse Content-Length ---
+        size_t content_length = 0;
+        const char *cl = strstr(buffer, "Content-Length:");
+        if (cl)
+        {
+            sscanf(cl, "Content-Length: %zu", &content_length);
+        }
+
+        // --- Find start of body ---
+        const char *body_start = strstr(buffer, "\r\n\r\n");
+        const char *body = "";
+        if (body_start)
+        {
+            body_start += 4;
+            body = body_start;
+        }
+
+        *req = (teapot_request){
+            .method = method,
+            .path = path_buf,
+            .body = body,
+            .body_length = strlen(body),
+        };
+
+        return 0;
+    }
+
     // --------------------------
     // Listen loop
     // --------------------------
@@ -198,36 +239,13 @@ extern "C"
             {
                 buffer[received] = '\0';
 
-                // --- Parse request line ---
-                char method_buf[8];
-                char path_buf[512];
-
-                sscanf(buffer, "%7s %511s", method_buf, path_buf);
-                int method = parse_method(method_buf);
-
-                // --- Parse Content-Length ---
-                size_t content_length = 0;
-                const char *cl = strstr(buffer, "Content-Length:");
-                if (cl)
+                teapot_request req = {0};
+                if (parse_request(buffer, received, &req) < 0)
                 {
-                    sscanf(cl, "Content-Length: %zu", &content_length);
+                    printf("Failed to parse request\n");
+                    teapot_close(client);
+                    continue;
                 }
-
-                // --- Find start of body ---
-                const char *body_start = strstr(buffer, "\r\n\r\n");
-                const char *body = "";
-                if (body_start)
-                {
-                    body_start += 4;
-                    body = body_start;
-                }
-
-                teapot_request req = {
-                    .method = method,
-                    .path = path_buf,
-                    .body = body,
-                    .body_length = strlen(body),
-                };
 
                 teapot_handler handler = teapot_find_handler(server, &req);
                 teapot_response resp;
