@@ -17,7 +17,7 @@ teapot_response hello_handler(const teapot_request *req)
 int main(void)
 {
     // User-provided route array
-    teapot_route routes[] = {
+    const teapot_route routes[] = {
         {TEAPOT_GET, "/hello", hello_handler},
     };
 

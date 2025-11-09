@@ -53,7 +53,7 @@ extern "C"
     typedef struct
     {
         int port;
-        teapot_route *routes;
+        const teapot_route *routes;
         size_t route_count;
     } teapot_server;
 
@@ -162,7 +162,7 @@ extern "C"
     {
         for (size_t i = 0; i < server->route_count; i++)
         {
-            teapot_route *r = &server->routes[i];
+            const teapot_route *r = &server->routes[i];
             if (r->method == req->method && strcmp(r->path, req->path) == 0)
             {
                 return r->handler;
