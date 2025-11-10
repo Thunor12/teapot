@@ -26,6 +26,7 @@ extern "C"
         teapot_method method;
         const char *path;
         const char *body;
+        const char *content_type;
         size_t body_length;
     } teapot_request;
 
@@ -158,6 +159,14 @@ extern "C"
             return -1;
         }
 
+        // --- Parse Content-Type ---
+        char content_type[100];
+        const char *ct = strstr(buffer, "Content-Type:");
+        if (ct)
+        {
+            sscanf(ct, "Content-Type: %s", content_type);
+        }
+
         // --- Parse Content-Length ---
         size_t content_length = 0;
         const char *cl = strstr(buffer, "Content-Length:");
@@ -177,8 +186,9 @@ extern "C"
 
         *req = (teapot_request){
             .method = method,
-            .path = path_buf,
-            .body = body,
+            .path = path_buf,             // FIXME leak
+            .body = body,                 // FIXME leak
+            .content_type = content_type, // FIXME leak
             .body_length = strlen(body),
         };
 
