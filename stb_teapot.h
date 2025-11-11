@@ -1,6 +1,10 @@
 #ifndef STB_TEAPOT_H
 #define STB_TEAPOT_H
 
+#ifdef _WIN32
+#define _CRT_SECURE_NO_WARNINGS (1)
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -9,6 +13,15 @@ extern "C"
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define _WINUSER_
+#define _WINGDI_
+#define _IMM_
+#define _WINCON_
+#include <windows.h>
+#endif
 
 // Initial capacity of a dynamic array
 #ifndef TP_DA_INIT_CAP
@@ -135,9 +148,9 @@ extern "C"
     typedef struct
     {
         teapot_method method;
-        const char *path;
-        const char *body;
-        const char *content_type;
+        tp_string_builder path;
+        tp_string_builder body;
+        tp_string_builder content_type;
         size_t body_length;
     } teapot_request;
 
@@ -167,7 +180,7 @@ extern "C"
 
     static inline void teapot_response_free(teapot_response *res)
     {
-        tp_da_free(res->body);
+        tp_sb_free(res->body);
         res->body.items = NULL;
         res->body.count = 0;
         res->body.capacity = 0;
@@ -233,7 +246,6 @@ extern "C"
 
 #ifdef _WIN32
 #include <winsock2.h>
-#include <windows.h>
     typedef SOCKET stb_teapot_socket_t;
 #else
 #include <sys/socket.h>
@@ -289,38 +301,71 @@ extern "C"
         return TEAPOT_UNKNOWN;
     }
 
+    static void free_request(teapot_request *req)
+    {
+        tp_sb_free(req->path);
+        tp_sb_free(req->body);
+        tp_sb_free(req->content_type);
+    }
+
     static int parse_request(char *buffer, size_t size, teapot_request *req)
     {
-        char method_buf[8];
-        char path_buf[512];
+        if (buffer == NULL || size == 0 || req == NULL)
+        {
+            return -1;
+        }
+
+        char method_buf[8] = {0};
+        char path_buf[512] = {0};
+
         sscanf(buffer, "%7s %511s", method_buf, path_buf);
         int method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
+        {
             return -1;
+        }
 
         const char *ct = strstr(buffer, "Content-Type:");
         const char *cl = strstr(buffer, "Content-Length:");
         const char *body_start = strstr(buffer, "\r\n\r\n");
 
-        char content_type[128] = "text/plain";
+        char content_type[128] = "";
         size_t content_length = 0;
         const char *body = "";
 
         if (ct)
+        {
             sscanf(ct, "Content-Type: %127s", content_type);
+        }
+
         if (cl)
+        {
             sscanf(cl, "Content-Length: %zu", &content_length);
+        }
+
         if (body_start)
         {
             body_start += 4;
             body = body_start;
         }
 
+        if (content_length > strlen(body))
+        {
+            printf("Body length exceeds received data\n");
+            return -1;
+        }
+
         req->method = method;
-        req->path = strdup(path_buf);
-        req->body = body;
-        req->content_type = strdup(content_type);
-        req->body_length = strlen(body);
+        tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
+        tp_sb_append_null(&req->path);
+
+        tp_sb_append_buf(&req->content_type, content_type, strlen(content_type));
+        tp_sb_append_null(&req->content_type);
+
+        tp_sb_append_buf(&req->body, body, content_length);
+        tp_sb_append_null(&req->body);
+
+        req->body_length = content_length;
 
         return 0;
     }
@@ -333,7 +378,7 @@ extern "C"
         for (size_t i = 0; i < server->route_count; i++)
         {
             const teapot_route *r = &server->routes[i];
-            if (r->method == req->method && strcmp(r->path, req->path) == 0)
+            if (r->method == req->method && strcmp(r->path, req->path.items) == 0)
             {
                 return r->handler;
             }
@@ -376,13 +421,13 @@ extern "C"
 
         printf("🫖 stb_teapot listening on port %d\n", server->port);
 
+        char buffer[8192] = {0};
         while (1)
         {
             stb_teapot_socket_t client = accept(sock, NULL, NULL);
             if (client < 0)
                 continue;
 
-            char buffer[8192];
             int received = teapot_read(client, buffer, sizeof(buffer) - 1);
             if (received <= 0)
             {
@@ -391,7 +436,9 @@ extern "C"
             }
             buffer[received] = '\0';
 
-            teapot_request req;
+            printf("Received: %s\n", buffer);
+
+            teapot_request req = {0};
             if (parse_request(buffer, received, &req) < 0)
             {
                 teapot_close(client);
@@ -403,20 +450,26 @@ extern "C"
             teapot_response_init(&resp, 200);
 
             if (handler)
+            {
                 resp = handler(&req);
+            }
             else
+            {
                 tp_sb_appendf(&resp.body, "404 Not Found\n");
+            }
+            tp_sb_append_null(&resp.body);
 
-            char header[256];
+            char header[256] = {0};
             int header_len = snprintf(
                 header, sizeof(header),
                 "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\n\r\n",
                 resp.status, tp_da_len(resp.body));
 
             teapot_write(client, header, header_len);
-            teapot_write(client, (char *)resp.body.items, (int)resp.body.count);
+            teapot_write(client, resp.body.items, (int)resp.body.count);
 
             teapot_response_free(&resp);
+            free_request(&req);
             teapot_close(client);
         }
 
