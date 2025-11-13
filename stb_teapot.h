@@ -114,6 +114,32 @@ extern "C"
         size_t capacity;
     } tp_string_builder;
 
+    typedef struct
+    {
+        char **items;
+        size_t count;
+        size_t capacity;
+    } tp_string_array;
+
+#define tp_sa_append_str(sa, str, str_len)                                \
+    do                                                                    \
+    {                                                                     \
+        char *s = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, str_len + 1); \
+        memcpy(s, str, str_len);                                          \
+        s[str_len] = '\0';                                                \
+        tp_da_append(sa, s);                                              \
+    } while (0)
+
+#define tp_sa_free(sa)                          \
+    do                                          \
+    {                                           \
+        for (size_t i = 0; i < (sa).count; i++) \
+        {                                       \
+            TP_FREE((sa).items[i]);             \
+        }                                       \
+        TP_FREE((sa).items);                    \
+    } while (0)
+
 // Append a sized buffer to a string builder
 #define tp_sb_append_buf(sb, buf, size) tp_da_append_many(sb, buf, size)
 
@@ -144,6 +170,19 @@ extern "C"
         TEAPOT_POST,
         TEAPOT_UNKNOWN
     } teapot_method;
+
+    typedef struct
+    {
+        tp_string_builder name;
+        tp_string_builder value;
+    } tp_header_line;
+
+    typedef struct
+    {
+        tp_header_line *items;
+        size_t count;
+        size_t capacity;
+    } tp_headers;
 
     typedef struct
     {
@@ -214,6 +253,23 @@ extern "C"
 
 #include <stdarg.h>
 
+    static const char *teapot_status_to_str(int status)
+    {
+        switch (status)
+        {
+        case 200:
+            return "OK";
+        case 400:
+            return "Bad Request";
+        case 404:
+            return "Not Found";
+        case 415:
+            return "Unsupported Media Type";
+        default:
+            return "Unknown";
+        }
+    }
+
     int tp_sb_appendf(tp_string_builder *sb, const char *fmt, ...)
     {
         va_list args;
@@ -234,6 +290,27 @@ extern "C"
         sb->count += n;
 
         return n;
+    }
+
+    static void tp_chop_by_delim_into_array(tp_string_array *sa, const char *src, const char *delim)
+    {
+        if (!sa || !src || !delim)
+        {
+            return;
+        }
+
+        tp_string_builder sb = {0};
+        tp_sb_append_cstr(&sb, src);
+
+        *sa = (tp_string_array){0};
+
+        char *token = strtok(sb.items, delim);
+        do
+        {
+            tp_sa_append_str(sa, token, strlen(token));
+        } while (token = strtok(NULL, delim));
+
+        tp_sb_free(sb);
     }
 
 // =====================================================
