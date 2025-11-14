@@ -133,7 +133,11 @@ int main(int argc, char **argv)
     int ret = 0;
     NOB_GO_REBUILD_URSELF(argc, argv);
 
-    nob_mkdir_if_not_exists(BUILD_DIR);
+    if (!nob_mkdir_if_not_exists(BUILD_DIR))
+    {
+        ret = 1;
+        goto defer;
+    }
 
     nob_shift_args(&argc, &argv); // Ignore program name
 
@@ -153,6 +157,7 @@ int main(int argc, char **argv)
     if (0 != compile_tests(tests, NOB_ARRAY_LEN(tests)))
     {
         ret = 1;
+        goto defer;
     }
 
 defer:

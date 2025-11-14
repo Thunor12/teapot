@@ -21,6 +21,7 @@ extern "C"
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -370,19 +371,29 @@ extern "C"
 
     static int teapot_read(stb_teapot_socket_t s, char *buf, int len)
     {
+        if (len <= 0)
+        {
+            return 0;
+        }
+
 #ifdef _WIN32
         return recv(s, buf, len, 0);
 #else
-        return read(s, buf, len);
+        return (int)read(s, buf, (size_t)len);
 #endif
     }
 
     static int teapot_write(stb_teapot_socket_t s, const char *buf, int len)
     {
+        if (len <= 0)
+        {
+            return 0;
+        }
+
 #ifdef _WIN32
         return send(s, buf, len, 0);
 #else
-        return write(s, buf, len);
+        return (int)write(s, buf, (size_t)len);
 #endif
     }
 
@@ -499,7 +510,7 @@ extern "C"
 
         struct sockaddr_in addr = {0};
         addr.sin_family = AF_INET;
-        addr.sin_port = htons((u_short)server->port);
+        addr.sin_port = htons((uint16_t)server->port);
         addr.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
