@@ -288,6 +288,27 @@ extern "C"
 #ifdef STB_TEAPOT_IMPLEMENTATION
 
 #include <stdarg.h>
+/* portable case-insensitive compare helper */
+#include <ctype.h>
+    static int tp_stricmp(const char *a, const char *b)
+    {
+        if (a == b)
+            return 0;
+        if (!a)
+            return b ? -1 : 0;
+        if (!b)
+            return 1;
+        while (*a && *b)
+        {
+            int ca = tolower((unsigned char)*a);
+            int cb = tolower((unsigned char)*b);
+            if (ca != cb)
+                return ca - cb;
+            ++a;
+            ++b;
+        }
+        return tolower((unsigned char)*a) - tolower((unsigned char)*b);
+    }
 
 #if 0
     static const char *teapot_status_to_str(int status)
@@ -385,11 +406,7 @@ extern "C"
             const char *hn = h->items[i].name.items;
             if (!hn)
                 continue;
-#ifdef _WIN32
-            if (_stricmp(hn, name) == 0)
-#else
-            if (strcasecmp(hn, name) == 0)
-#endif
+            if (tp_stricmp(hn, name) == 0)
                 return &h->items[i].value;
         }
         return NULL;
