@@ -10,6 +10,8 @@
 #define BUILD_DIR "./build/"
 #define TEST_DIR "./tests/"
 
+#define COMPILE_FLAGS "-O2", "-g", "-Wall", "-Wextra", "-Wpedantic", "-std=c17"
+
 #ifdef _WIN32
 #define LINK_FLAGS "-O2", "-lws2_32"
 #else
@@ -35,8 +37,7 @@ static int compile_exe(
 #endif
 
     nob_cc_flags(&cmd);
-    nob_cmd_append(&cmd, "-O2");
-    nob_cmd_append(&cmd, "-g");
+    nob_cmd_append(&cmd, COMPILE_FLAGS);
 
     nob_cc_output(&cmd, output_file);
 

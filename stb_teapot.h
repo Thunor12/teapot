@@ -253,6 +253,7 @@ extern "C"
 
 #include <stdarg.h>
 
+#if 0
     static const char *teapot_status_to_str(int status)
     {
         switch (status)
@@ -269,6 +270,7 @@ extern "C"
             return "Unknown";
         }
     }
+#endif
 
     int tp_sb_appendf(tp_string_builder *sb, const char *fmt, ...)
     {
@@ -292,7 +294,7 @@ extern "C"
         return n;
     }
 
-    static void tp_chop_by_delim_into_array(tp_string_array *sa, const char *src, const char *delim)
+    void tp_chop_by_delim_into_array(tp_string_array *sa, const char *src, const char *delim)
     {
         if (!sa || !src || !delim)
         {
@@ -308,7 +310,7 @@ extern "C"
         do
         {
             tp_sa_append_str(sa, token, strlen(token));
-        } while (token = strtok(NULL, delim));
+        } while ((token = strtok(NULL, delim)));
 
         tp_sb_free(sb);
     }
@@ -324,11 +326,21 @@ extern "C"
 #ifdef _WIN32
 #include <winsock2.h>
     typedef SOCKET stb_teapot_socket_t;
+
+    static int socket_ok(stb_teapot_socket_t s)
+    {
+        return s != INVALID_SOCKET;
+    }
 #else
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
     typedef int stb_teapot_socket_t;
+    static int socket_ok(stb_teapot_socket_t s)
+    {
+        return s >= 0;
+    }
+
 #endif
 
     static void teapot_init()
@@ -417,7 +429,7 @@ extern "C"
 
         if (cl)
         {
-            sscanf(cl, "Content-Length: %zu", &content_length);
+            sscanf(cl, "Content-Length: %llu", &content_length);
         }
 
         if (body_start)
@@ -471,7 +483,7 @@ extern "C"
         teapot_init();
 
         stb_teapot_socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0)
+        if (!socket_ok(sock))
         {
             perror("socket");
             return 1;
@@ -502,8 +514,10 @@ extern "C"
         while (1)
         {
             stb_teapot_socket_t client = accept(sock, NULL, NULL);
-            if (client < 0)
+            if (!socket_ok(client))
+            {
                 continue;
+            }
 
             int received = teapot_read(client, buffer, sizeof(buffer) - 1);
             if (received <= 0)
@@ -539,8 +553,7 @@ extern "C"
             char header[256] = {0};
             int header_len = snprintf(
                 header, sizeof(header),
-                "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\n\r\n",
-                resp.status, tp_da_len(resp.body));
+                "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: %llu\r\n\r\n", resp.status, tp_da_len(resp.body));
 
             teapot_write(client, header, header_len);
             teapot_write(client, resp.body.items, (int)resp.body.count);
