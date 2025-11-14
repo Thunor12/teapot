@@ -412,14 +412,39 @@ extern "C"
         tp_sb_free(sb);
     }
 
+#if 0
     /* helpers for header parsing (static, internal) */
     static size_t tp_trim_trailing_ws(const char *s, size_t len)
     {
+        // trim trailing whitespace
         while (len > 0 && isspace((unsigned char)s[len - 1]))
         {
             --len;
         }
         return len;
+    }
+
+#endif
+
+    static size_t tp_trim_leading_ws(const char *s, size_t len)
+    {
+        size_t start = 0;
+        while (start < len && isspace((unsigned char)s[start]))
+        {
+            ++start;
+        }
+        return start;
+    }
+
+    static size_t tp_trim_ws(const char *s, size_t len)
+    {
+        size_t start = tp_trim_leading_ws(s, len);
+        size_t end = len;
+        while (end > start && isspace((unsigned char)s[end - 1]))
+        {
+            --end;
+        }
+        return end - start;
     }
 
     // TODO: handle folded headers (lines starting with SP/HT are continuations of previous header)
@@ -447,7 +472,7 @@ extern "C"
 
         const char *name_start = line;
         size_t name_len = (size_t)(colon - name_start);
-        name_len = tp_trim_trailing_ws(name_start, name_len);
+        name_len = tp_trim_ws(name_start, name_len);
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
         const char *vstart = colon + 1;
@@ -457,7 +482,7 @@ extern "C"
             ++vstart;
         }
         size_t vlen = (vstart < line_end) ? (size_t)(line_end - vstart) : 0;
-        vlen = tp_trim_trailing_ws(vstart, vlen);
+        vlen = tp_trim_ws(vstart, vlen);
 
         /* clamp to configured maxima */
 #ifndef TP_MAX_HEADER_NAME_LEN

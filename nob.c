@@ -85,6 +85,7 @@ defer:
 const char *tests[] = {
     TEST_DIR "low_level_test_stb_teapot.c",
     TEST_DIR "header_parse.c",
+    TEST_DIR "unit_test_headers.c",
 };
 
 static int compile_tests(const char **tests, size_t test_count)
