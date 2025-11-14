@@ -1,6 +1,14 @@
 #ifndef STB_TEAPOT_H
 #define STB_TEAPOT_H
 
+// Usage:
+//
+// #define STB_TEAPOT_IMPLEMENTATION
+// #include "stb_teapot.h"
+// ... your code ...
+
+// stb_teapot.h is a single-header C library that provides a simple HTTP server implementation.
+
 #ifdef _WIN32
 #define _CRT_SECURE_NO_WARNINGS (1)
 #endif
