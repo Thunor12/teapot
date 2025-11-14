@@ -387,6 +387,7 @@ extern "C"
         return n;
     }
 
+    // TODO: See if we can do without this function entirely
     void tp_chop_by_delim_into_array(tp_string_array *sa, char *src, size_t src_len, const char *delim)
     {
         if (!sa || !src || !delim)
@@ -411,30 +412,130 @@ extern "C"
         tp_sb_free(sb);
     }
 
-    void tp_extract_header_keyval(tp_headers *headers_parsed, char *raw_header, size_t header_size)
+    /* helpers for header parsing (static, internal) */
+    static size_t tp_trim_trailing_ws(const char *s, size_t len)
     {
-        tp_string_array headers = {0};
-
-        tp_chop_by_delim_into_array(&headers, raw_header, header_size, "\r\n");
-
-        for (size_t i = 0; i < headers.count; i++)
+        while (len > 0 && isspace((unsigned char)s[len - 1]))
         {
-            char key[80] = {0};
-            char value[80] = {0};
-            tp_header_line header_line = {0};
+            --len;
+        }
+        return len;
+    }
 
-            /* limit reads to avoid buffer overflow */
-            sscanf(headers.items[i], "%79[^:]: %79[^\r\n]", key, value);
-            tp_sb_append_buf(&header_line.name, key, strlen(key));
-            tp_sb_append_null(&header_line.name);
-
-            tp_sb_append_buf(&header_line.value, value, strlen(value));
-            tp_sb_append_null(&header_line.value);
-
-            tp_da_append(headers_parsed, header_line);
+    // TODO: handle folded headers (lines starting with SP/HT are continuations of previous header)
+    // TODO: handle multiple headers with same name (append to existing value with comma separation)
+    // TODO: handle invalid headers gracefully
+    // TODO: handle overly long headers gracefully
+    // TODO: handle invalid characters gracefully
+    // TODO: handle non-ASCII characters gracefully
+    // TODO: handle different line endings (\r\n, \n, \r) gracefully
+    // TODO: handle empty header names gracefully
+    // TODO: handle empty header values gracefully
+    // TODO: handle headers with no value (e.g., "X-Flag:") gracefully
+    static int tp_parse_and_append_header_line(tp_headers *headers_parsed, const char *line, size_t linelen)
+    {
+        if (!headers_parsed || !line || linelen == 0)
+        {
+            return 0;
         }
 
-        tp_sa_free(headers);
+        const char *colon = (const char *)memchr(line, ':', linelen);
+        if (!colon)
+        {
+            return 0;
+        }
+
+        const char *name_start = line;
+        size_t name_len = (size_t)(colon - name_start);
+        name_len = tp_trim_trailing_ws(name_start, name_len);
+
+        /* value: skip ':' and leading whitespace, then trim trailing whitespace */
+        const char *vstart = colon + 1;
+        const char *line_end = line + linelen;
+        while (vstart < line_end && isspace((unsigned char)*vstart))
+        {
+            ++vstart;
+        }
+        size_t vlen = (vstart < line_end) ? (size_t)(line_end - vstart) : 0;
+        vlen = tp_trim_trailing_ws(vstart, vlen);
+
+        /* clamp to configured maxima */
+#ifndef TP_MAX_HEADER_NAME_LEN
+#define TP_MAX_HEADER_NAME_LEN 256
+#endif
+#ifndef TP_MAX_HEADER_VALUE_LEN
+#define TP_MAX_HEADER_VALUE_LEN 4096
+#endif
+        if (name_len > (size_t)TP_MAX_HEADER_NAME_LEN)
+        {
+            name_len = (size_t)TP_MAX_HEADER_NAME_LEN;
+        }
+
+        if (vlen > (size_t)TP_MAX_HEADER_VALUE_LEN)
+        {
+            vlen = (size_t)TP_MAX_HEADER_VALUE_LEN;
+        }
+
+        tp_header_line header_line = {0};
+        if (name_len)
+        {
+            tp_sb_append_buf(&header_line.name, name_start, name_len);
+            tp_sb_append_null(&header_line.name);
+        }
+        if (vlen)
+        {
+            tp_sb_append_buf(&header_line.value, vstart, vlen);
+            tp_sb_append_null(&header_line.value);
+        }
+        tp_da_append(headers_parsed, header_line);
+        return 1;
+    }
+
+    void tp_extract_header_keyval(tp_headers *headers_parsed, char *raw_header, size_t header_size)
+    {
+        if (headers_parsed == NULL || raw_header == NULL || header_size == 0)
+        {
+            return;
+        }
+
+        /* optional global clamp if defined */
+#ifdef TP_MAX_HEADER_TOTAL
+        if (header_size > (size_t)TP_MAX_HEADER_TOTAL)
+            header_size = (size_t)TP_MAX_HEADER_TOTAL;
+#endif
+
+        /* scan line by line and use helper to parse each non-empty line */
+        size_t i = 0;
+        while (i < header_size)
+        {
+            size_t line_start = i;
+            size_t line_end = line_start;
+
+            // find end of line
+            while ((line_end < header_size) && (raw_header[line_end] != '\r') && (raw_header[line_end] != '\n'))
+            {
+                ++line_end;
+            }
+
+            // extract line
+            size_t linelen = (line_end > line_start) ? (size_t)(line_end - line_start) : 0;
+            if (linelen > 0)
+            {
+                tp_parse_and_append_header_line(headers_parsed, raw_header + line_start, linelen);
+            }
+
+            /* advance past CR/LF */
+            i = line_end;
+            if (i < header_size && raw_header[i] == '\r')
+            {
+                ++i;
+            }
+
+            if (i < header_size && raw_header[i] == '\n')
+            {
+                ++i;
+            }
+        }
     }
 
     const tp_string_builder *tp_headers_get(const tp_headers *h, const char *name)
