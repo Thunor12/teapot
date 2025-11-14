@@ -207,6 +207,7 @@ extern "C"
         tp_string_builder path;
         tp_string_builder body;
         tp_string_builder content_type;
+        tp_headers headers;
         size_t body_length;
     } teapot_request;
 
@@ -241,6 +242,24 @@ extern "C"
         res->body.count = 0;
         res->body.capacity = 0;
     }
+
+    void tp_headers_free(tp_headers *h)
+    {
+        if (h == NULL)
+            return;
+        for (size_t i = 0; i < h->count; ++i)
+        {
+            tp_sb_free(h->items[i].name);
+            tp_sb_free(h->items[i].value);
+        }
+        TP_FREE(h->items);
+        h->items = NULL;
+        h->count = 0;
+        h->capacity = 0;
+    }
+
+    /* Find a header value (case-insensitive). Returns pointer to the value string-builder, or NULL if not found */
+    const tp_string_builder *tp_headers_get(const tp_headers *h, const char *name);
 
     // =====================================================
     // 🚏 Routing and Server Types
@@ -332,17 +351,17 @@ extern "C"
         tp_sb_free(sb);
     }
 
-    void tp_extract_header_keyval(tp_headers *headers_parsed,  char *raw_header, size_t header_size)
+    void tp_extract_header_keyval(tp_headers *headers_parsed, char *raw_header, size_t header_size)
     {
-        tp_string_array headers = { 0 };
+        tp_string_array headers = {0};
 
         tp_chop_by_delim_into_array(&headers, raw_header, header_size, "\r\n");
 
-        for(size_t i = 0; i < headers.count; i++)
+        for (size_t i = 0; i < headers.count; i++)
         {
-            char key[80]   = { 0 };
-            char value[80] = { 0 };
-            tp_header_line header_line = { 0 };
+            char key[80] = {0};
+            char value[80] = {0};
+            tp_header_line header_line = {0};
 
             sscanf(headers.items[i], "%[^:]: %[^\r\n]", key, value);
             tp_sb_append_buf(&header_line.name, key, strlen(key));
@@ -355,6 +374,25 @@ extern "C"
         }
 
         tp_sa_free(headers);
+    }
+
+    const tp_string_builder *tp_headers_get(const tp_headers *h, const char *name)
+    {
+        if (h == NULL || name == NULL)
+            return NULL;
+        for (size_t i = 0; i < h->count; ++i)
+        {
+            const char *hn = h->items[i].name.items;
+            if (!hn)
+                continue;
+#ifdef _WIN32
+            if (_stricmp(hn, name) == 0)
+#else
+            if (strcasecmp(hn, name) == 0)
+#endif
+                return &h->items[i].value;
+        }
+        return NULL;
     }
 
 // =====================================================
@@ -447,6 +485,7 @@ extern "C"
         tp_sb_free(req->path);
         tp_sb_free(req->body);
         tp_sb_free(req->content_type);
+        tp_headers_free(&req->headers);
     }
 
     static int parse_request(char *buffer, size_t size, teapot_request *req)
@@ -455,6 +494,12 @@ extern "C"
         {
             return -1;
         }
+
+        /* ensure headers/builders start empty */
+        req->path = (tp_string_builder){0};
+        req->body = (tp_string_builder){0};
+        req->content_type = (tp_string_builder){0};
+        req->headers = (tp_headers){0};
 
         char method_buf[8] = {0};
         char path_buf[512] = {0};
@@ -489,6 +534,12 @@ extern "C"
             body_start += 4;
             body = body_start;
         }
+
+        /* extract headers from start..(body_start) */
+        size_t header_size = size;
+        if (body_start)
+            header_size = (size_t)(body_start - buffer);
+        tp_extract_header_keyval(&req->headers, buffer, header_size);
 
         if (content_length > strlen(body))
         {
