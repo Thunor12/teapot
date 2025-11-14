@@ -201,6 +201,13 @@ extern "C"
         size_t capacity;
     } tp_headers;
 
+    typedef enum
+    {
+        TP_HEADER_NOT_FOUND = 0,
+        TP_HEADER_FOUND = 1,
+        TP_HEADER_MATCH = 2
+    } tp_header_result;
+
     typedef struct
     {
         teapot_method method;
@@ -261,6 +268,11 @@ extern "C"
     /* Find a header value (case-insensitive). Returns pointer to the value string-builder, or NULL if not found */
     const tp_string_builder *tp_headers_get(const tp_headers *h, const char *name);
 
+    /* Return 1 if header 'name' exists and its value equals 'expected_value', otherwise 0 */
+    int tp_headers_match(const tp_headers *h, const char *name, const char *expected_value);
+
+    tp_header_result tp_headers_check(const tp_headers *h, const char *name, const char *expected_value, tp_header_line *o_header_line);
+
     // =====================================================
     // 🚏 Routing and Server Types
     // =====================================================
@@ -308,6 +320,31 @@ extern "C"
             ++b;
         }
         return tolower((unsigned char)*a) - tolower((unsigned char)*b);
+    }
+
+    /* helper: find header line by name (returns NULL if not found) */
+    static const tp_header_line *tp_headers_find(const tp_headers *h, const char *name)
+    {
+        if (h == NULL || name == NULL)
+            return NULL;
+        for (size_t i = 0; i < h->count; ++i)
+        {
+            const char *hn = h->items[i].name.items ? h->items[i].name.items : "";
+            if (tp_stricmp(hn, name) == 0)
+                return &h->items[i];
+        }
+        return NULL;
+    }
+
+    /* Return 1 if header 'name' exists and its value equals 'expected_value', otherwise 0 */
+    int tp_headers_match(const tp_headers *h, const char *name, const char *expected_value)
+    {
+        if (h == NULL || name == NULL || expected_value == NULL)
+            return 0;
+        const tp_string_builder *val = tp_headers_get(h, name);
+        if (val == NULL || val->items == NULL)
+            return 0;
+        return strcmp(val->items, expected_value) == 0 ? 1 : 0;
     }
 
 #if 0
@@ -399,17 +436,41 @@ extern "C"
 
     const tp_string_builder *tp_headers_get(const tp_headers *h, const char *name)
     {
-        if (h == NULL || name == NULL)
-            return NULL;
-        for (size_t i = 0; i < h->count; ++i)
+        const tp_header_line *hl = tp_headers_find(h, name);
+        return hl ? &hl->value : NULL;
+    }
+
+    tp_header_result tp_headers_check(const tp_headers *h, const char *name, const char *expected_value, tp_header_line *o_header_line)
+    {
+        if (expected_value == NULL)
         {
-            const char *hn = h->items[i].name.items;
-            if (!hn)
-                continue;
-            if (tp_stricmp(hn, name) == 0)
-                return &h->items[i].value;
+            const tp_header_line *hl = tp_headers_find(h, name);
+            if (!hl)
+            {
+                return TP_HEADER_NOT_FOUND;
+            }
+
+            if (o_header_line)
+            {
+                *o_header_line = *hl;
+            }
+
+            return TP_HEADER_FOUND;
         }
-        return NULL;
+
+        const tp_header_line *hl = tp_headers_find(h, name);
+        if (!hl)
+        {
+            return TP_HEADER_NOT_FOUND;
+        }
+
+        if (o_header_line)
+        {
+            *o_header_line = *hl;
+        }
+
+        const char *val = hl->value.items ? hl->value.items : "";
+        return (strcmp(val, expected_value) == 0) ? TP_HEADER_MATCH : TP_HEADER_FOUND;
     }
 
 // =====================================================

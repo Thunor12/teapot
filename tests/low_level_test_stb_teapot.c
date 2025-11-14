@@ -11,11 +11,12 @@ teapot_response hello_handler(const teapot_request *req)
     teapot_response resp;
     teapot_response_init(&resp, 200);
 
-    /* Example: echo an X-Hello header if present */
-    const tp_string_builder *hdr = tp_headers_get(&req->headers, "X-Hello");
-    if (hdr && hdr->items)
+    /* Example: echo an X-Hello header if present (existence check) */
+    tp_header_line h = {0};
+    int r = tp_headers_check(&req->headers, "X-Hello", NULL, &h);
+    if (r != TP_HEADER_NOT_FOUND)
     {
-        tp_sb_appendf(&resp.body, "Hello (X-Hello=%s)\n", hdr->items);
+        tp_sb_appendf(&resp.body, "Hello (X-Hello=%s)\n", h.value.items ? h.value.items : "");
     }
     else
     {
@@ -38,20 +39,21 @@ teapot_response echo_handler(const teapot_request *req)
         return resp;
     }
 
-    const tp_string_builder *ct = tp_headers_get(&req->headers, "Content-Type");
-    if (ct == NULL || ct->items == NULL)
+    /* single-call check for existence + match */
+    tp_header_line hdr = {0};
+    int res = tp_headers_check(&req->headers, "Content-Type", "text/plain", &hdr);
+    if (res == TP_HEADER_NOT_FOUND)
     {
         resp.status = 400;
         tp_sb_appendf(&resp.body, "Bad Request: Missing Content-Type header\n");
         tp_sb_append_null(&resp.body);
         return resp;
     }
-
-    if (strcmp(ct->items, "text/plain") != 0)
+    if (res != TP_HEADER_MATCH)
     {
         resp.status = 415;
         tp_sb_appendf(&resp.body,
-                      "Unsupported Media Type (%s): Only text/plain is supported\n", ct->items);
+                      "Unsupported Media Type (%s): Only text/plain is supported\n", hdr.value.items ? hdr.value.items : "");
         tp_sb_append_null(&resp.body);
         return resp;
     }
@@ -59,7 +61,7 @@ teapot_response echo_handler(const teapot_request *req)
     resp.status = 200;
     tp_sb_appendf(&resp.body,
                   "POST /echo received!\nBody (%zu bytes) %s:\n%s\n",
-                  req->body_length, ct->items, req->body.items);
+                  req->body_length, hdr.value.items, req->body.items);
     tp_sb_append_null(&resp.body);
 
     return resp;
