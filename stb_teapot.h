@@ -5,6 +5,14 @@
 #define _CRT_SECURE_NO_WARNINGS (1)
 #endif
 
+#ifdef _WIN32
+#define TP_SIZE_T_FMT "%llu"
+#define TP_INT_T_FMT "%ld"
+#else
+#define TP_SIZE_T_FMT "%zu"
+#define TP_INT_T_FMT "%d"
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -429,7 +437,7 @@ extern "C"
 
         if (cl)
         {
-            sscanf(cl, "Content-Length: %llu", &content_length);
+            sscanf(cl, "Content-Length: " TP_SIZE_T_FMT "", &content_length);
         }
 
         if (body_start)
@@ -553,7 +561,7 @@ extern "C"
             char header[256] = {0};
             int header_len = snprintf(
                 header, sizeof(header),
-                "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: %llu\r\n\r\n", resp.status, tp_da_len(resp.body));
+                "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n", resp.status, tp_da_len(resp.body));
 
             teapot_write(client, header, header_len);
             teapot_write(client, resp.body.items, (int)resp.body.count);

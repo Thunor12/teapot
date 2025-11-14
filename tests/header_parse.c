@@ -25,7 +25,7 @@ int main(void)
 
         tp_da_append(&headers_parsed, header_line);
 
-        printf("Header %lld: {Name: %s, Value: %s}\n", i, key, value);
+        printf("Header " TP_SIZE_T_FMT ": {Name: %s, Value: %s}\n", i, key, value);
     }
 
     tp_da_free(headers_parsed);
