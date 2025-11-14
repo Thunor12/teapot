@@ -213,7 +213,6 @@ extern "C"
         teapot_method method;
         tp_string_builder path;
         tp_string_builder body;
-        tp_string_builder content_type;
         tp_headers headers;
         size_t body_length;
     } teapot_request;
@@ -401,10 +400,13 @@ extern "C"
         *sa = (tp_string_array){0};
 
         char *token = strtok(sb.items, delim);
-        do
+        if (token)
         {
-            tp_sa_append_str(sa, token, strlen(token));
-        } while ((token = strtok(NULL, delim)));
+            do
+            {
+                tp_sa_append_str(sa, token, strlen(token));
+            } while ((token = strtok(NULL, delim)));
+        }
 
         tp_sb_free(sb);
     }
@@ -421,7 +423,8 @@ extern "C"
             char value[80] = {0};
             tp_header_line header_line = {0};
 
-            sscanf(headers.items[i], "%[^:]: %[^\r\n]", key, value);
+            /* limit reads to avoid buffer overflow */
+            sscanf(headers.items[i], "%79[^:]: %79[^\r\n]", key, value);
             tp_sb_append_buf(&header_line.name, key, strlen(key));
             tp_sb_append_null(&header_line.name);
 
@@ -562,7 +565,6 @@ extern "C"
     {
         tp_sb_free(req->path);
         tp_sb_free(req->body);
-        tp_sb_free(req->content_type);
         tp_headers_free(&req->headers);
     }
 
@@ -576,7 +578,6 @@ extern "C"
         /* ensure headers/builders start empty */
         req->path = (tp_string_builder){0};
         req->body = (tp_string_builder){0};
-        req->content_type = (tp_string_builder){0};
         req->headers = (tp_headers){0};
 
         char method_buf[8] = {0};
@@ -619,18 +620,9 @@ extern "C"
             header_size = (size_t)(body_start - buffer);
         tp_extract_header_keyval(&req->headers, buffer, header_size);
 
-        if (content_length > strlen(body))
-        {
-            printf("Body length exceeds received data\n");
-            return -1;
-        }
-
         req->method = method;
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
         tp_sb_append_null(&req->path);
-
-        tp_sb_append_buf(&req->content_type, content_type, strlen(content_type));
-        tp_sb_append_null(&req->content_type);
 
         tp_sb_append_buf(&req->body, body, content_length);
         tp_sb_append_null(&req->body);
@@ -713,6 +705,7 @@ extern "C"
             teapot_request req = {0};
             if (parse_request(buffer, (size_t)received, &req) < 0)
             {
+                free_request(&req);
                 teapot_close(client);
                 continue;
             }
