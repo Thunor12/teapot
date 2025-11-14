@@ -291,13 +291,13 @@ extern "C"
         // NOTE: the new_capacity needs to be +1 because of the null terminator.
         // However, further below we increase sb->count by n, not n + 1.
         // This is because we don't want the sb to include the null terminator. The user can always sb_append_null() if they want it
-        tp_da_reserve(sb, sb->count + n + 1);
+        tp_da_reserve(sb, sb->count + (size_t)(n + 1));
         char *dest = sb->items + sb->count;
         va_start(args, fmt);
-        vsnprintf(dest, n + 1, fmt, args);
+        vsnprintf(dest, (size_t)(n + 1), fmt, args);
         va_end(args);
 
-        sb->count += n;
+        sb->count += (size_t)n;
 
         return n;
     }
@@ -351,7 +351,7 @@ extern "C"
 
 #endif
 
-    static void teapot_init()
+    static void teapot_init(void)
     {
 #ifdef _WIN32
         WSADATA wsa;
@@ -499,7 +499,7 @@ extern "C"
 
         struct sockaddr_in addr = {0};
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(server->port);
+        addr.sin_port = htons((u_short)server->port);
         addr.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
@@ -538,7 +538,7 @@ extern "C"
             printf("Received: %s\n", buffer);
 
             teapot_request req = {0};
-            if (parse_request(buffer, received, &req) < 0)
+            if (parse_request(buffer, (size_t)received, &req) < 0)
             {
                 teapot_close(client);
                 continue;

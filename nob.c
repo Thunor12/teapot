@@ -10,7 +10,15 @@
 #define BUILD_DIR "./build/"
 #define TEST_DIR "./tests/"
 
-#define COMPILE_FLAGS "-O2", "-g", "-Wall", "-Wextra", "-Wpedantic", "-std=c17"
+#define COMPILE_FLAGS "-O2", "-g",                                                                           \
+                      "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wconversion", "-Wimplicit-fallthrough", \
+                      "-Wshadow", "-Wpointer-arith", "-Wcast-qual", "-Wstrict-prototypes",                   \
+                      "-D_FORTIFY_SOURCE=2",                                                                 \
+                      "-D_GLIBCXX_ASSERTIONS",                                                               \
+                      "-fexceptions",                                                                        \
+                      "-fstack-clash-protection",                                                            \
+                      "-fstack-protector-strong",                                                            \
+                      "-std=c17"
 
 #ifdef _WIN32
 #define LINK_FLAGS "-O2", "-lws2_32"
