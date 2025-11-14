@@ -311,7 +311,7 @@ extern "C"
         return n;
     }
 
-    void tp_chop_by_delim_into_array(tp_string_array *sa, const char *src, const char *delim)
+    void tp_chop_by_delim_into_array(tp_string_array *sa, char *src, size_t src_len, const char *delim)
     {
         if (!sa || !src || !delim)
         {
@@ -319,7 +319,7 @@ extern "C"
         }
 
         tp_string_builder sb = {0};
-        tp_sb_append_cstr(&sb, src);
+        tp_sb_append_buf(&sb, src, src_len);
 
         *sa = (tp_string_array){0};
 
@@ -330,6 +330,31 @@ extern "C"
         } while ((token = strtok(NULL, delim)));
 
         tp_sb_free(sb);
+    }
+
+    void tp_extract_header_keyval(tp_headers *headers_parsed,  char *raw_header, size_t header_size)
+    {
+        tp_string_array headers = { 0 };
+
+        tp_chop_by_delim_into_array(&headers, raw_header, header_size, "\r\n");
+
+        for(size_t i = 0; i < headers.count; i++)
+        {
+            char key[80]   = { 0 };
+            char value[80] = { 0 };
+            tp_header_line header_line = { 0 };
+
+            sscanf(headers.items[i], "%[^:]: %[^\r\n]", key, value);
+            tp_sb_append_buf(&header_line.name, key, strlen(key));
+            tp_sb_append_null(&header_line.name);
+
+            tp_sb_append_buf(&header_line.value, value, strlen(value));
+            tp_sb_append_null(&header_line.value);
+
+            tp_da_append(headers_parsed, header_line);
+        }
+
+        tp_sa_free(headers);
     }
 
 // =====================================================
