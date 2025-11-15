@@ -234,6 +234,7 @@ int socket_ok(stb_teapot_socket_t s);
     typedef struct
     {
         int status;
+        // TODO add headers
         tp_string_builder body;
     } teapot_response;
 
@@ -898,7 +899,10 @@ int socket_ok(stb_teapot_socket_t s);
             resp->status, tp_da_len(resp->body));
 
         if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        {
             return -1;
+        }
+
         if (resp->body.count > 0)
         {
             if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
