@@ -133,24 +133,35 @@ static void job_queue_push(job_queue_t *q, stb_teapot_socket_t client)
 {
     job_t *j = (job_t *)malloc(sizeof(job_t));
     if (!j)
+    {
         return;
+    }
+
     j->client = client;
     j->next = NULL;
 #ifdef _WIN32
     EnterCriticalSection(&q->mutex);
     if (q->tail)
+    {
         q->tail->next = j;
+    }
     else
+    {
         q->head = j;
+    }
     q->tail = j;
     LeaveCriticalSection(&q->mutex);
     WakeConditionVariable(&q->cond_var);
 #else
     pthread_mutex_lock(&q->m);
     if (q->tail)
+    {
         q->tail->next = j;
+    }
     else
+    {
         q->head = j;
+    }
     q->tail = j;
     pthread_cond_signal(&q->cv);
     pthread_mutex_unlock(&q->m);
@@ -171,7 +182,9 @@ static int job_queue_pop(job_queue_t *q, stb_teapot_socket_t *out_client)
     job_t *j = q->head;
     q->head = j->next;
     if (!q->head)
+    {
         q->tail = NULL;
+    }
     LeaveCriticalSection(&q->mutex);
 #else
     pthread_mutex_lock(&q->m);
@@ -217,12 +230,16 @@ typedef struct
 #ifdef _WIN32
 static DWORD WINAPI worker_thread_fn(LPVOID arg)
 {
+    printf("Worker thread started: %lu\n", GetCurrentThreadId());
+
     worker_arg_t *w = (worker_arg_t *)arg;
     stb_teapot_socket_t client;
     while (job_queue_pop(&g_queue, &client))
     {
         if ((int)client < 0)
+        {
             continue;
+        }
         teapot_handle_client_connection(w->server, client);
     }
     return 0;
@@ -230,6 +247,8 @@ static DWORD WINAPI worker_thread_fn(LPVOID arg)
 #else
 static void *worker_thread_fn(void *arg)
 {
+    printf("Worker thread started: %lu\n", (unsigned long)pthread_self());
+
     worker_arg_t *w = (worker_arg_t *)arg;
     stb_teapot_socket_t client;
     while (job_queue_pop(&g_queue, &client))
