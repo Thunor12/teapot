@@ -40,6 +40,26 @@ extern "C"
 #include <windows.h>
 #endif
 
+#ifdef _WIN32
+#include <winsock2.h>
+    typedef SOCKET stb_teapot_socket_t;
+
+    static int socket_ok(stb_teapot_socket_t s)
+    {
+        return s != INVALID_SOCKET;
+    }
+#else
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+typedef int stb_teapot_socket_t;
+static int socket_ok(stb_teapot_socket_t s)
+{
+    return s >= 0;
+}
+
+#endif
+
 // Initial capacity of a dynamic array
 #ifndef TP_DA_INIT_CAP
 #define TP_DA_INIT_CAP 256
@@ -270,6 +290,7 @@ extern "C"
     /* Return 1 if header 'name' exists and its value equals 'expected_value', otherwise 0 */
     int tp_headers_match(const tp_headers *h, const char *name, const char *expected_value);
 
+    // Check for existence and optionally match of a header. If found, fills o_header_line with the header line.
     tp_header_result tp_headers_check(const tp_headers *h, const char *name, const char *expected_value, tp_header_line *o_header_line);
 
     // =====================================================
@@ -295,6 +316,11 @@ extern "C"
     // 🧠 API
     // =====================================================
     int teapot_listen(teapot_server *server);
+    int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock);
+    stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock);
+    int teapot_recv_request(stb_teapot_socket_t client, char *buffer, int bufsize, int *out_received);
+    int teapot_send_response(stb_teapot_socket_t client, const teapot_response *resp);
+    int teapot_handle_client_connection(teapot_server *server, stb_teapot_socket_t client);
 
 #ifdef STB_TEAPOT_IMPLEMENTATION
 
@@ -304,17 +330,30 @@ extern "C"
     static int tp_stricmp(const char *a, const char *b)
     {
         if (a == b)
+        {
             return 0;
+        }
+
         if (!a)
+        {
             return b ? -1 : 0;
+        }
+
         if (!b)
+        {
             return 1;
+        }
+
         while (*a && *b)
         {
             int ca = tolower((unsigned char)*a);
             int cb = tolower((unsigned char)*b);
+
             if (ca != cb)
+            {
                 return ca - cb;
+            }
+
             ++a;
             ++b;
         }
@@ -610,26 +649,6 @@ extern "C"
 #include <string.h>
 #include <stdarg.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-    typedef SOCKET stb_teapot_socket_t;
-
-    static int socket_ok(stb_teapot_socket_t s)
-    {
-        return s != INVALID_SOCKET;
-    }
-#else
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-    typedef int stb_teapot_socket_t;
-    static int socket_ok(stb_teapot_socket_t s)
-    {
-        return s >= 0;
-    }
-
-#endif
-
     static void teapot_init(void)
     {
 #ifdef _WIN32
@@ -777,15 +796,19 @@ extern "C"
     // -----------------------------------------------------
     // 🫖 Listen Loop
     // -----------------------------------------------------
-    int teapot_listen(teapot_server *server)
+
+    int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock)
     {
+        if (!server || !out_listen_sock)
+            return -1;
+
         teapot_init();
 
-        stb_teapot_socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (!socket_ok(sock))
+        stb_teapot_socket_t s = socket(AF_INET, SOCK_STREAM, 0);
+        if (!socket_ok(s))
         {
             perror("socket");
-            return 1;
+            return -1;
         }
 
         struct sockaddr_in addr = {0};
@@ -793,79 +816,168 @@ extern "C"
         addr.sin_port = htons((uint16_t)server->port);
         addr.sin_addr.s_addr = INADDR_ANY;
 
-        if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+        if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
         {
             perror("bind");
-            teapot_close(sock);
+            teapot_close(s);
+            return -1;
+        }
+
+        if (listen(s, 8) < 0)
+        {
+            perror("listen");
+            teapot_close(s);
+            return -1;
+        }
+
+        *out_listen_sock = (stb_teapot_socket_t)s;
+        return 0;
+    }
+
+    stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock)
+    {
+        if (!socket_ok((stb_teapot_socket_t)listen_sock))
+        {
+            return (stb_teapot_socket_t)-1;
+        }
+
+        stb_teapot_socket_t client = accept((stb_teapot_socket_t)listen_sock, NULL, NULL);
+        if (!socket_ok(client))
+        {
+            return (stb_teapot_socket_t)-1;
+        }
+
+        return (stb_teapot_socket_t)client;
+    }
+
+    int teapot_recv_request(stb_teapot_socket_t client, char *buffer, int bufsize, int *out_received)
+    {
+        if (!socket_ok((stb_teapot_socket_t)client) || !buffer || bufsize <= 0)
+        {
+            return -1;
+        }
+
+        int received = teapot_read((stb_teapot_socket_t)client, buffer, bufsize - 1);
+        if (received <= 0)
+        {
+            if (out_received)
+            {
+                *out_received = received;
+            }
+            return -1;
+        }
+
+        buffer[received] = '\0';
+        if (out_received)
+        {
+            *out_received = received;
+        }
+        return 0;
+    }
+
+    int teapot_send_response(stb_teapot_socket_t client, const teapot_response *resp)
+    {
+        if (!socket_ok((stb_teapot_socket_t)client) || !resp)
+            return -1;
+
+        char header[256] = {0};
+        int header_len = snprintf(
+            header, sizeof(header),
+            "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, tp_da_len(resp->body));
+
+        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+            return -1;
+        if (resp->body.count > 0)
+        {
+            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
+            {
+                return -1;
+            }
+        }
+        return 0;
+    }
+
+    int teapot_handle_client_connection(teapot_server *server, stb_teapot_socket_t client)
+    {
+        if (!server || !socket_ok((stb_teapot_socket_t)client))
+        {
+            teapot_close((stb_teapot_socket_t)client);
+            return -1;
+        }
+
+        char buffer[8192] = {0};
+        int received = 0;
+        if (teapot_recv_request(client, buffer, (int)sizeof(buffer), &received) < 0)
+        {
+            teapot_close((stb_teapot_socket_t)client);
+            return -1;
+        }
+
+        teapot_request req = {0};
+        if (parse_request(buffer, (size_t)received, &req) < 0)
+        {
+            free_request(&req);
+            teapot_close((stb_teapot_socket_t)client);
+            return -1;
+        }
+
+        teapot_handler handler = teapot_find_handler(server, &req);
+        teapot_response resp;
+        teapot_response_init(&resp, 200);
+
+        if (handler)
+        {
+            resp = handler(&req);
+        }
+        else
+        {
+            tp_sb_appendf(&resp.body, "404 Not Found\n");
+        }
+
+        tp_sb_append_null(&resp.body);
+
+        teapot_send_response(client, &resp);
+
+        teapot_response_free(&resp);
+        free_request(&req);
+        teapot_close((stb_teapot_socket_t)client);
+        return 0;
+    }
+
+    // Keep a convenience blocking single-threaded listen that uses the new API
+    int teapot_listen(teapot_server *server)
+    {
+        if (!server)
+        {
             return 1;
         }
 
-        if (listen(sock, 8) < 0)
+        stb_teapot_socket_t listen_sock;
+        if (teapot_listener_open(server, &listen_sock) < 0)
         {
-            perror("listen");
-            teapot_close(sock);
             return 1;
         }
 
         printf("🫖 stb_teapot listening on port %d\n", server->port);
 
-        char buffer[8192] = {0};
         while (1)
         {
-            stb_teapot_socket_t client = accept(sock, NULL, NULL);
-            if (!socket_ok(client))
+            stb_teapot_socket_t client = teapot_listener_accept(listen_sock);
+            if ((int)client < 0)
             {
                 continue;
             }
 
-            int received = teapot_read(client, buffer, sizeof(buffer) - 1);
-            if (received <= 0)
-            {
-                teapot_close(client);
-                continue;
-            }
-            buffer[received] = '\0';
-
-            printf("Received: %s\n", buffer);
-
-            teapot_request req = {0};
-            if (parse_request(buffer, (size_t)received, &req) < 0)
-            {
-                free_request(&req);
-                teapot_close(client);
-                continue;
-            }
-
-            teapot_handler handler = teapot_find_handler(server, &req);
-            teapot_response resp;
-            teapot_response_init(&resp, 200);
-
-            if (handler)
-            {
-                resp = handler(&req);
-            }
-            else
-            {
-                tp_sb_appendf(&resp.body, "404 Not Found\n");
-            }
-            tp_sb_append_null(&resp.body);
-
-            char header[256] = {0};
-            int header_len = snprintf(
-                header, sizeof(header),
-                "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n", resp.status, tp_da_len(resp.body));
-
-            teapot_write(client, header, header_len);
-            teapot_write(client, resp.body.items, (int)resp.body.count);
-
-            teapot_response_free(&resp);
-            free_request(&req);
-            teapot_close(client);
+            // simple single-threaded handling (users can accept and dispatch themselves)
+            teapot_handle_client_connection(server, client);
         }
 
-        teapot_close(sock);
+        /* unreachable in current API, but keep symmetry */
+        // teapot_close((stb_teapot_socket_t)listen_sock);
         return 0;
     }
+
 #endif // STB_TEAPOT_IMPLEMENTATION
 
 #ifdef __cplusplus

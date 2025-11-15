@@ -9,6 +9,7 @@
 
 #define BUILD_DIR "./build/"
 #define TEST_DIR "./tests/"
+#define EXAMPLE_DIR "./examples/"
 
 #define COMPILE_FLAGS "-O2", "-g",                                                                           \
                       "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wconversion", "-Wimplicit-fallthrough", \
@@ -82,13 +83,15 @@ defer:
     return 0;
 }
 
-const char *tests[] = {
+const char *tests_and_examples[] = {
     TEST_DIR "low_level_test_stb_teapot.c",
     TEST_DIR "header_parse.c",
     TEST_DIR "unit_test_headers.c",
+    EXAMPLE_DIR "threaded_server.c",
+    EXAMPLE_DIR "thread_pool_server_crossplat.c",
 };
 
-static int compile_tests(const char **tests, size_t test_count)
+static int compile_all_exe(const char **exes, size_t test_count)
 {
     int ret = 0;
     Nob_String_Builder sb = {0};
@@ -99,9 +102,9 @@ static int compile_tests(const char **tests, size_t test_count)
         memset(sb.items, 0, sb.count);
         sb.count = 0;
 
-        const char *test_source = tests[i];
-        const char *test_name = nob_path_name(test_source);
-        sprintf(temp, "%s", test_name);
+        const char *exe_source = exes[i];
+        const char *exe_name = nob_path_name(exe_source);
+        sprintf(temp, "%s", exe_name);
 
         char *exe = strtok(temp, ".c");
 
@@ -116,7 +119,7 @@ static int compile_tests(const char **tests, size_t test_count)
             "stb_teapot.h",
         };
 
-        if (0 != compile_exe(&test_source, 1, deps, NOB_ARRAY_LEN(deps), sb.items))
+        if (0 != compile_exe(&exe_source, 1, deps, NOB_ARRAY_LEN(deps), sb.items))
         {
             ret = 1;
             goto defer;
@@ -155,7 +158,7 @@ int main(int argc, char **argv)
         }
     }
 
-    if (0 != compile_tests(tests, NOB_ARRAY_LEN(tests)))
+    if (0 != compile_all_exe(tests_and_examples, NOB_ARRAY_LEN(tests_and_examples)))
     {
         ret = 1;
         goto defer;
