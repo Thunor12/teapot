@@ -44,19 +44,13 @@ extern "C"
 #include <winsock2.h>
     typedef SOCKET stb_teapot_socket_t;
 
-    static int socket_ok(stb_teapot_socket_t s)
-    {
-        return s != INVALID_SOCKET;
-    }
+    int socket_ok(stb_teapot_socket_t s);
 #else
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 typedef int stb_teapot_socket_t;
-static int socket_ok(stb_teapot_socket_t s)
-{
-    return s >= 0;
-}
+int socket_ok(stb_teapot_socket_t s);
 
 #endif
 
@@ -327,6 +321,23 @@ static int socket_ok(stb_teapot_socket_t s)
 #include <stdarg.h>
 /* portable case-insensitive compare helper */
 #include <ctype.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+    int socket_ok(stb_teapot_socket_t s)
+    {
+        return s != INVALID_SOCKET;
+    }
+#else
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+    int socket_ok(stb_teapot_socket_t s)
+    {
+        return s >= 0;
+    }
+#endif
+
     static int tp_stricmp(const char *a, const char *b)
     {
         if (a == b)
