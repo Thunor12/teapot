@@ -238,7 +238,7 @@ int socket_ok(stb_teapot_socket_t s);
         tp_string_builder body;
     } teapot_response;
 
-    static inline void teapot_response_init(teapot_response *res, int status)
+    inline void teapot_response_init(teapot_response *res, int status)
     {
         res->status = status;
         res->body.items = NULL;
@@ -246,7 +246,7 @@ int socket_ok(stb_teapot_socket_t s);
         res->body.capacity = 0;
     }
 
-    static inline void teapot_response_write(teapot_response *res, const void *data, size_t len)
+    inline void teapot_response_write(teapot_response *res, const void *data, size_t len)
     {
         if (res == NULL || data == NULL || len == 0)
         {
@@ -256,7 +256,7 @@ int socket_ok(stb_teapot_socket_t s);
         tp_sb_append_buf(&res->body, data, len);
     }
 
-    static inline void teapot_response_free(teapot_response *res)
+    inline void teapot_response_free(teapot_response *res)
     {
         tp_sb_free(res->body);
         res->body.items = NULL;
@@ -264,7 +264,7 @@ int socket_ok(stb_teapot_socket_t s);
         res->body.capacity = 0;
     }
 
-    void tp_headers_free(tp_headers *h)
+    inline void tp_headers_free(tp_headers *h)
     {
         if (h == NULL)
             return;
