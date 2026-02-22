@@ -234,19 +234,20 @@ int socket_ok(stb_teapot_socket_t s);
     typedef struct
     {
         int status;
-        // TODO add headers
+        const char *content_type; /* NULL => "text/plain" */
         tp_string_builder body;
     } teapot_response;
 
-    inline void teapot_response_init(teapot_response *res, int status)
+    static inline void teapot_response_init(teapot_response *res, int status)
     {
         res->status = status;
+        res->content_type = NULL;
         res->body.items = NULL;
         res->body.count = 0;
         res->body.capacity = 0;
     }
 
-    inline void teapot_response_write(teapot_response *res, const void *data, size_t len)
+    static inline void teapot_response_write(teapot_response *res, const void *data, size_t len)
     {
         if (res == NULL || data == NULL || len == 0)
         {
@@ -256,7 +257,7 @@ int socket_ok(stb_teapot_socket_t s);
         tp_sb_append_buf(&res->body, data, len);
     }
 
-    inline void teapot_response_free(teapot_response *res)
+    static inline void teapot_response_free(teapot_response *res)
     {
         tp_sb_free(res->body);
         res->body.items = NULL;
@@ -264,7 +265,7 @@ int socket_ok(stb_teapot_socket_t s);
         res->body.capacity = 0;
     }
 
-    inline void tp_headers_free(tp_headers *h)
+    static inline void tp_headers_free(tp_headers *h)
     {
         if (h == NULL)
             return;
@@ -397,24 +398,26 @@ int socket_ok(stb_teapot_socket_t s);
         return strcmp(val->items, expected_value) == 0 ? 1 : 0;
     }
 
-#if 0
     static const char *teapot_status_to_str(int status)
     {
         switch (status)
         {
         case 200:
             return "OK";
+        case 201:
+            return "Created";
         case 400:
             return "Bad Request";
         case 404:
             return "Not Found";
         case 415:
             return "Unsupported Media Type";
+        case 500:
+            return "Internal Server Error";
         default:
             return "Unknown";
         }
     }
-#endif
 
     int tp_sb_appendf(tp_string_builder *sb, const char *fmt, ...)
     {
@@ -797,7 +800,20 @@ int socket_ok(stb_teapot_socket_t s);
         for (size_t i = 0; i < server->route_count; i++)
         {
             const teapot_route *r = &server->routes[i];
-            if (r->method == req->method && strcmp(r->path, req->path.items) == 0)
+            if (r->method != req->method)
+                continue;
+            size_t path_len = strlen(r->path);
+            /* Prefix match: path ending with '*' matches any path that starts with the prefix (minus '*') */
+            if (path_len > 0 && r->path[path_len - 1] == '*')
+            {
+                size_t prefix_len = path_len - 1;
+                if (strncmp(r->path, req->path.items, prefix_len) == 0 &&
+                    (req->path.items[prefix_len] == '\0' || req->path.items[prefix_len] == '/' || req->path.items[prefix_len] == '?'))
+                {
+                    return r->handler;
+                }
+            }
+            else if (strcmp(r->path, req->path.items) == 0)
             {
                 return r->handler;
             }
@@ -893,10 +909,11 @@ int socket_ok(stb_teapot_socket_t s);
             return -1;
 
         char header[256] = {0};
+        const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
         int header_len = snprintf(
             header, sizeof(header),
-            "HTTP/1.1 %d OK\r\nContent-Type: text/plain\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
-            resp->status, tp_da_len(resp->body));
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
 
         if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
         {
@@ -947,6 +964,7 @@ int socket_ok(stb_teapot_socket_t s);
         }
         else
         {
+            resp.status = 404;
             tp_sb_appendf(&resp.body, "404 Not Found\n");
         }
 
