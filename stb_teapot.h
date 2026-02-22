@@ -199,6 +199,8 @@ int socket_ok(stb_teapot_socket_t s);
     {
         TEAPOT_GET,
         TEAPOT_POST,
+        TEAPOT_PUT,
+        TEAPOT_DELETE,
         TEAPOT_UNKNOWN
     } teapot_method;
 
@@ -718,6 +720,10 @@ int socket_ok(stb_teapot_socket_t s);
             return TEAPOT_GET;
         if (strncmp(s, "POST", 4) == 0)
             return TEAPOT_POST;
+        if (strncmp(s, "PUT", 3) == 0)
+            return TEAPOT_PUT;
+        if (strncmp(s, "DELETE", 6) == 0)
+            return TEAPOT_DELETE;
         return TEAPOT_UNKNOWN;
     }
 
@@ -784,10 +790,17 @@ int socket_ok(stb_teapot_socket_t s);
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
         tp_sb_append_null(&req->path);
 
-        tp_sb_append_buf(&req->body, body, content_length);
+        /* Only append body bytes that are actually in the buffer (body may arrive in a later packet) */
+        size_t body_available = 0;
+        if (body_start && size > (size_t)(body - buffer))
+            body_available = size - (size_t)(body - buffer);
+        size_t to_append = content_length;
+        if (to_append > body_available)
+            to_append = body_available;
+        tp_sb_append_buf(&req->body, body, to_append);
         tp_sb_append_null(&req->body);
 
-        req->body_length = content_length;
+        req->body_length = to_append; /* may be less than Content-Length if body arrives in next packet */
 
         return 0;
     }
@@ -954,6 +967,35 @@ int socket_ok(stb_teapot_socket_t s);
             return -1;
         }
 
+        /* If Content-Length says we should have more body, read remaining bytes (body may be in next packet) */
+        {
+            const tp_string_builder *cl_val = tp_headers_get(&req.headers, "Content-Length");
+            size_t expected_body = 0;
+            if (cl_val && cl_val->items)
+            {
+                long n = atol(cl_val->items);
+                if (n > 0 && n <= (long)(4 * 1024 * 1024)) /* cap 4MB */
+                    expected_body = (size_t)n;
+            }
+            if (expected_body > req.body_length)
+            {
+                req.body.count = req.body_length; /* drop trailing null so we can append */
+                while (req.body_length < expected_body)
+                {
+                    char read_buf[4096];
+                    size_t to_read = expected_body - req.body_length;
+                    if (to_read > sizeof(read_buf))
+                        to_read = sizeof(read_buf);
+                    int n = teapot_read((stb_teapot_socket_t)client, read_buf, (int)to_read);
+                    if (n <= 0)
+                        break;
+                    tp_sb_append_buf(&req.body, read_buf, (size_t)n);
+                    req.body_length += (size_t)n;
+                }
+                tp_sb_append_null(&req.body);
+            }
+        }
+
         teapot_handler handler = teapot_find_handler(server, &req);
         teapot_response resp;
         teapot_response_init(&resp, 200);
@@ -968,7 +1010,7 @@ int socket_ok(stb_teapot_socket_t s);
             tp_sb_appendf(&resp.body, "404 Not Found\n");
         }
 
-        tp_sb_append_null(&resp.body);
+        /* Do not append null: body is sent as-is; trailing null would break JSON parsing in clients. */
 
         teapot_send_response(client, &resp);
 
