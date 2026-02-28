@@ -204,6 +204,18 @@ int socket_ok(stb_teapot_socket_t s);
         TEAPOT_UNKNOWN
     } teapot_method;
 
+    /* Common HTTP response status codes (for teapot_response.status) */
+    typedef enum
+    {
+        TEAPOT_HTTP_OK = 200,
+        TEAPOT_HTTP_CREATED = 201,
+        TEAPOT_HTTP_BAD_REQUEST = 400,
+        TEAPOT_HTTP_NOT_FOUND = 404,
+        TEAPOT_HTTP_METHOD_NOT_ALLOWED = 405,
+        TEAPOT_HTTP_UNSUPPORTED_MEDIA_TYPE = 415,
+        TEAPOT_HTTP_INTERNAL_ERROR = 500,
+    } teapot_http_status;
+
     typedef struct
     {
         tp_string_builder name;
@@ -404,17 +416,19 @@ int socket_ok(stb_teapot_socket_t s);
     {
         switch (status)
         {
-        case 200:
+        case TEAPOT_HTTP_OK:
             return "OK";
-        case 201:
+        case TEAPOT_HTTP_CREATED:
             return "Created";
-        case 400:
+        case TEAPOT_HTTP_BAD_REQUEST:
             return "Bad Request";
-        case 404:
+        case TEAPOT_HTTP_NOT_FOUND:
             return "Not Found";
-        case 415:
+        case TEAPOT_HTTP_METHOD_NOT_ALLOWED:
+            return "Method Not Allowed";
+        case TEAPOT_HTTP_UNSUPPORTED_MEDIA_TYPE:
             return "Unsupported Media Type";
-        case 500:
+        case TEAPOT_HTTP_INTERNAL_ERROR:
             return "Internal Server Error";
         default:
             return "Unknown";
@@ -998,7 +1012,7 @@ int socket_ok(stb_teapot_socket_t s);
 
         teapot_handler handler = teapot_find_handler(server, &req);
         teapot_response resp;
-        teapot_response_init(&resp, 200);
+        teapot_response_init(&resp, TEAPOT_HTTP_OK);
 
         if (handler)
         {
@@ -1006,7 +1020,7 @@ int socket_ok(stb_teapot_socket_t s);
         }
         else
         {
-            resp.status = 404;
+            resp.status = TEAPOT_HTTP_NOT_FOUND;
             tp_sb_appendf(&resp.body, "404 Not Found\n");
         }
 
