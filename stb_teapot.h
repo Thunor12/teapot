@@ -541,7 +541,10 @@ int socket_ok(stb_teapot_socket_t s);
         }
 
         const char *name_start = line;
-        size_t name_len = (size_t)(colon - name_start);
+        size_t raw_name_len = (size_t)(colon - name_start);
+        size_t name_leading_ws = tp_trim_leading_ws(name_start, raw_name_len);
+        name_start += name_leading_ws;
+        size_t name_len = raw_name_len - name_leading_ws;
         name_len = tp_trim_ws(name_start, name_len);
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
@@ -566,17 +569,19 @@ int socket_ok(stb_teapot_socket_t s);
             name_len = (size_t)TP_MAX_HEADER_NAME_LEN;
         }
 
+        if (name_len == 0)
+        {
+            return 0;
+        }
+
         if (vlen > (size_t)TP_MAX_HEADER_VALUE_LEN)
         {
             vlen = (size_t)TP_MAX_HEADER_VALUE_LEN;
         }
 
         tp_header_line header_line = {0};
-        if (name_len)
-        {
-            tp_sb_append_buf(&header_line.name, name_start, name_len);
-            tp_sb_append_null(&header_line.name);
-        }
+        tp_sb_append_buf(&header_line.name, name_start, name_len);
+        tp_sb_append_null(&header_line.name);
         if (vlen)
         {
             tp_sb_append_buf(&header_line.value, vstart, vlen);
