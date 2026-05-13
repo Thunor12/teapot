@@ -172,7 +172,7 @@ int main(void)
 #endif
     }
 
-    /* unreachable in this simple example */
+    /* Unreachable in this simple example. */
     teapot_close((stb_teapot_socket_t)listen_sock);
     return 0;
 }
