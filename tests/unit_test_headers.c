@@ -168,6 +168,24 @@ static void test_clamping(void)
     free(long_val);
 }
 
+static void test_request_lowercase_content_length(void)
+{
+    char raw[] = "POST /echo HTTP/1.1\r\n"
+                 "host: localhost\r\n"
+                 "content-type: text/plain\r\n"
+                 "content-length: 5\r\n"
+                 "\r\n"
+                 "hello";
+    teapot_request req = {0};
+
+    int parsed = parse_request(raw, sizeof(raw) - 1, &req);
+    ok("request lowercase content-length parses", parsed == 0);
+    ok("request lowercase content-length body length", req.body_length == 5);
+    ok("request lowercase content-length body", req.body.items && memcmp(req.body.items, "hello", 5) == 0);
+
+    free_request(&req);
+}
+
 int main(void)
 {
     printf("Running header parsing unit tests...\n\n");
@@ -180,6 +198,7 @@ int main(void)
     test_no_colon_ignored();
     test_empty_name_ignored();
     test_clamping();
+    test_request_lowercase_content_length();
 
     if (failures == 0)
     {
