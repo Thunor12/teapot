@@ -30,6 +30,7 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -540,9 +541,14 @@ int socket_ok(stb_teapot_socket_t s);
             return 0;
         }
 
-        const char *name_start = line;
-        size_t name_len = (size_t)(colon - name_start);
-        name_len = tp_trim_ws(name_start, name_len);
+        size_t raw_name_len = (size_t)(colon - line);
+        size_t name_offset = tp_trim_leading_ws(line, raw_name_len);
+        const char *name_start = line + name_offset;
+        size_t name_len = tp_trim_ws(name_start, raw_name_len - name_offset);
+        if (name_len == 0)
+        {
+            return 0;
+        }
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
         const char *vstart = colon + 1;
@@ -764,7 +770,7 @@ int socket_ok(stb_teapot_socket_t s);
         char path_buf[512] = {0};
 
         sscanf(buffer, "%7s %511s", method_buf, path_buf);
-        int method = parse_method(method_buf);
+        teapot_method method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
@@ -935,17 +941,25 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
+        tp_string_builder header = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        int header_len = snprintf(
-            header, sizeof(header),
+        int header_len = tp_sb_appendf(
+            &header,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
 
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (header_len < 0 || header.count > (size_t)INT_MAX || resp->body.count > (size_t)INT_MAX)
         {
+            tp_sb_free(header);
             return -1;
         }
+
+        if (teapot_write((stb_teapot_socket_t)client, header.items, (int)header.count) < 0)
+        {
+            tp_sb_free(header);
+            return -1;
+        }
+        tp_sb_free(header);
 
         if (resp->body.count > 0)
         {

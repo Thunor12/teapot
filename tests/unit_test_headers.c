@@ -168,6 +168,49 @@ static void test_clamping(void)
     free(long_val);
 }
 
+static void test_long_content_type_response(void)
+{
+    int fds[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+    {
+        ok("socketpair created", 0);
+        return;
+    }
+
+    teapot_response resp;
+    teapot_response_init(&resp, TEAPOT_HTTP_OK);
+
+    char content_type[320];
+    memset(content_type, 'x', sizeof(content_type) - 1);
+    content_type[sizeof(content_type) - 1] = '\0';
+    resp.content_type = content_type;
+    teapot_response_write(&resp, "OK", 2);
+
+    int sent = teapot_send_response(fds[0], &resp);
+    ok("long content type response send succeeds", sent == 0);
+
+    shutdown(fds[0], SHUT_WR);
+
+    char buf[1024];
+    size_t used = 0;
+    while (used < sizeof(buf) - 1)
+    {
+        ssize_t n = read(fds[1], buf + used, sizeof(buf) - 1 - used);
+        if (n <= 0)
+            break;
+        used += (size_t)n;
+    }
+    buf[used] = '\0';
+
+    char expected[512];
+    snprintf(expected, sizeof(expected), "Content-Type: %s\r\nContent-Length: 2\r\n\r\nOK", content_type);
+    ok("long content type response includes complete headers", sent == 0 && strstr(buf, expected) != NULL);
+
+    teapot_response_free(&resp);
+    close(fds[0]);
+    close(fds[1]);
+}
+
 int main(void)
 {
     printf("Running header parsing unit tests...\n\n");
@@ -180,6 +223,7 @@ int main(void)
     test_no_colon_ignored();
     test_empty_name_ignored();
     test_clamping();
+    test_long_content_type_response();
 
     if (failures == 0)
     {
