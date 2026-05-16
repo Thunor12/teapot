@@ -935,17 +935,25 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
+        tp_string_builder header = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        int header_len = snprintf(
-            header, sizeof(header),
+        int header_len = tp_sb_appendf(
+            &header,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
 
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (header_len < 0)
         {
+            tp_sb_free(header);
             return -1;
         }
+
+        if (teapot_write((stb_teapot_socket_t)client, header.items, (int)header.count) < 0)
+        {
+            tp_sb_free(header);
+            return -1;
+        }
+        tp_sb_free(header);
 
         if (resp->body.count > 0)
         {
