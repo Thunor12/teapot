@@ -30,6 +30,7 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -442,6 +443,10 @@ int socket_ok(stb_teapot_socket_t s);
         va_start(args, fmt);
         int n = vsnprintf(NULL, 0, fmt, args);
         va_end(args);
+        if (n < 0)
+        {
+            return n;
+        }
 
         // NOTE: the new_capacity needs to be +1 because of the null terminator.
         // However, further below we increase sb->count by n, not n + 1.
@@ -725,6 +730,23 @@ int socket_ok(stb_teapot_socket_t s);
 #endif
     }
 
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
+    {
+        size_t written = 0;
+        while (written < len)
+        {
+            size_t remaining = len - written;
+            int chunk_len = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = teapot_write(s, buf + written, chunk_len);
+            if (n <= 0)
+            {
+                return -1;
+            }
+            written += (size_t)n;
+        }
+        return 0;
+    }
+
     // -----------------------------------------------------
     // 🧩 Request Parsing (minimal, single-line HTTP/1.0)
     // -----------------------------------------------------
@@ -935,21 +957,27 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
+        tp_string_builder header = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        int header_len = snprintf(
-            header, sizeof(header),
+        if (tp_sb_appendf(
+                &header,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
-            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+                resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body)) < 0)
         {
+            tp_sb_free(header);
             return -1;
         }
 
+        if (teapot_write_all((stb_teapot_socket_t)client, header.items, header.count) < 0)
+        {
+            tp_sb_free(header);
+            return -1;
+        }
+        tp_sb_free(header);
+
         if (resp->body.count > 0)
         {
-            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
+            if (teapot_write_all((stb_teapot_socket_t)client, resp->body.items, resp->body.count) < 0)
             {
                 return -1;
             }
