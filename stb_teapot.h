@@ -30,7 +30,6 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include <limits.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -542,8 +541,15 @@ int socket_ok(stb_teapot_socket_t s);
         }
 
         const char *name_start = line;
-        size_t name_len = (size_t)(colon - name_start);
+        size_t raw_name_len = (size_t)(colon - name_start);
+        size_t name_leading = tp_trim_leading_ws(name_start, raw_name_len);
+        name_start += name_leading;
+        size_t name_len = raw_name_len - name_leading;
         name_len = tp_trim_ws(name_start, name_len);
+        if (name_len == 0)
+        {
+            return 0;
+        }
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
         const char *vstart = colon + 1;
@@ -573,11 +579,8 @@ int socket_ok(stb_teapot_socket_t s);
         }
 
         tp_header_line header_line = {0};
-        if (name_len)
-        {
-            tp_sb_append_buf(&header_line.name, name_start, name_len);
-            tp_sb_append_null(&header_line.name);
-        }
+        tp_sb_append_buf(&header_line.name, name_start, name_len);
+        tp_sb_append_null(&header_line.name);
         if (vlen)
         {
             tp_sb_append_buf(&header_line.value, vstart, vlen);
@@ -726,23 +729,6 @@ int socket_ok(stb_teapot_socket_t s);
 #endif
     }
 
-    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
-    {
-        size_t written = 0;
-        while (written < len)
-        {
-            size_t remaining = len - written;
-            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
-            int n = teapot_write(s, buf + written, chunk);
-            if (n <= 0)
-            {
-                return -1;
-            }
-            written += (size_t)n;
-        }
-        return 0;
-    }
-
     // -----------------------------------------------------
     // 🧩 Request Parsing (minimal, single-line HTTP/1.0)
     // -----------------------------------------------------
@@ -757,48 +743,6 @@ int socket_ok(stb_teapot_socket_t s);
         if (strncmp(s, "DELETE", 6) == 0)
             return TEAPOT_DELETE;
         return TEAPOT_UNKNOWN;
-    }
-
-    static int teapot_parse_content_length(const char *s, size_t *out)
-    {
-        if (s == NULL || out == NULL)
-        {
-            return 0;
-        }
-
-        const unsigned char *p = (const unsigned char *)s;
-        while (*p != '\0' && isspace((unsigned char)*p))
-        {
-            ++p;
-        }
-        if (!isdigit((unsigned char)*p))
-        {
-            return 0;
-        }
-
-        size_t value = 0;
-        while (isdigit((unsigned char)*p))
-        {
-            size_t digit = (size_t)(*p - (unsigned char)'0');
-            if (value > (SIZE_MAX - digit) / 10)
-            {
-                return 0;
-            }
-            value = value * 10 + digit;
-            ++p;
-        }
-
-        while (*p != '\0' && isspace((unsigned char)*p))
-        {
-            ++p;
-        }
-        if (*p != '\0')
-        {
-            return 0;
-        }
-
-        *out = value;
-        return 1;
     }
 
     static void free_request(teapot_request *req)
@@ -824,16 +768,29 @@ int socket_ok(stb_teapot_socket_t s);
         char path_buf[512] = {0};
 
         sscanf(buffer, "%7s %511s", method_buf, path_buf);
-        teapot_method method = parse_method(method_buf);
+        int method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
         }
 
+        const char *ct = strstr(buffer, "Content-Type:");
+        const char *cl = strstr(buffer, "Content-Length:");
         const char *body_start = strstr(buffer, "\r\n\r\n");
 
+        char content_type[128] = "";
         size_t content_length = 0;
         const char *body = "";
+
+        if (ct)
+        {
+            sscanf(ct, "Content-Type: %127s", content_type);
+        }
+
+        if (cl)
+        {
+            sscanf(cl, "Content-Length: " TP_SIZE_T_FMT "", &content_length);
+        }
 
         if (body_start)
         {
@@ -846,12 +803,6 @@ int socket_ok(stb_teapot_socket_t s);
         if (body_start)
             header_size = (size_t)(body_start - buffer);
         tp_extract_header_keyval(&req->headers, buffer, header_size);
-
-        const tp_string_builder *cl_val = tp_headers_get(&req->headers, "Content-Length");
-        if (cl_val && cl_val->items)
-        {
-            (void)teapot_parse_content_length(cl_val->items, &content_length);
-        }
 
         req->method = method;
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
@@ -988,43 +939,21 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
+        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        int needed = snprintf(
-            NULL, 0,
+        int header_len = snprintf(
+            header, sizeof(header),
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-        if (needed < 0)
-        {
-            return -1;
-        }
 
-        size_t header_len = (size_t)needed;
-        char *header = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, header_len + 1);
-        if (header == NULL)
+        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
         {
             return -1;
         }
-
-        int written = snprintf(
-            header, header_len + 1,
-            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
-            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-        if (written < 0 || (size_t)written != header_len)
-        {
-            TP_FREE(header);
-            return -1;
-        }
-
-        if (teapot_write_all((stb_teapot_socket_t)client, header, header_len) < 0)
-        {
-            TP_FREE(header);
-            return -1;
-        }
-        TP_FREE(header);
 
         if (resp->body.count > 0)
         {
-            if (teapot_write_all((stb_teapot_socket_t)client, resp->body.items, resp->body.count) < 0)
+            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
             {
                 return -1;
             }
@@ -1062,9 +991,9 @@ int socket_ok(stb_teapot_socket_t s);
             size_t expected_body = 0;
             if (cl_val && cl_val->items)
             {
-                size_t n = 0;
-                if (teapot_parse_content_length(cl_val->items, &n) && n <= (size_t)(4 * 1024 * 1024)) /* cap 4MB */
-                    expected_body = n;
+                long n = atol(cl_val->items);
+                if (n > 0 && n <= (long)(4 * 1024 * 1024)) /* cap 4MB */
+                    expected_body = (size_t)n;
             }
             if (expected_body > req.body_length)
             {
