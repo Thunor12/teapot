@@ -748,6 +748,54 @@ int socket_ok(stb_teapot_socket_t s);
         tp_headers_free(&req->headers);
     }
 
+    static int tp_parse_content_length_value(const tp_string_builder *cl_val, size_t *out_content_length)
+    {
+        if (out_content_length == NULL)
+        {
+            return 0;
+        }
+        *out_content_length = 0;
+
+        if (cl_val == NULL || cl_val->items == NULL)
+        {
+            return 0;
+        }
+
+        const char *s = cl_val->items;
+        while (isspace((unsigned char)*s))
+        {
+            ++s;
+        }
+        if (!isdigit((unsigned char)*s))
+        {
+            return 0;
+        }
+
+        size_t value = 0;
+        while (isdigit((unsigned char)*s))
+        {
+            size_t digit = (size_t)(*s - '0');
+            if (value > (SIZE_MAX - digit) / 10)
+            {
+                return 0;
+            }
+            value = value * 10 + digit;
+            ++s;
+        }
+
+        while (isspace((unsigned char)*s))
+        {
+            ++s;
+        }
+        if (*s != '\0')
+        {
+            return 0;
+        }
+
+        *out_content_length = value;
+        return 1;
+    }
+
     static int parse_request(char *buffer, size_t size, teapot_request *req)
     {
         if (buffer == NULL || size == 0 || req == NULL)
@@ -770,23 +818,10 @@ int socket_ok(stb_teapot_socket_t s);
             return -1;
         }
 
-        const char *ct = strstr(buffer, "Content-Type:");
-        const char *cl = strstr(buffer, "Content-Length:");
         const char *body_start = strstr(buffer, "\r\n\r\n");
 
-        char content_type[128] = "";
         size_t content_length = 0;
         const char *body = "";
-
-        if (ct)
-        {
-            sscanf(ct, "Content-Type: %127s", content_type);
-        }
-
-        if (cl)
-        {
-            sscanf(cl, "Content-Length: " TP_SIZE_T_FMT "", &content_length);
-        }
 
         if (body_start)
         {
@@ -799,6 +834,9 @@ int socket_ok(stb_teapot_socket_t s);
         if (body_start)
             header_size = (size_t)(body_start - buffer);
         tp_extract_header_keyval(&req->headers, buffer, header_size);
+
+        const tp_string_builder *cl_val = tp_headers_get(&req->headers, "Content-Length");
+        (void)tp_parse_content_length_value(cl_val, &content_length);
 
         req->method = method;
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
@@ -935,17 +973,38 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
         int header_len = snprintf(
-            header, sizeof(header),
+            NULL, 0,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (header_len < 0)
         {
             return -1;
         }
+
+        char *header = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, (size_t)header_len + 1);
+        if (header == NULL)
+        {
+            return -1;
+        }
+
+        int written = snprintf(
+            header, (size_t)header_len + 1,
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+        if (written != header_len)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+
+        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+        TP_FREE(header);
 
         if (resp->body.count > 0)
         {
@@ -985,12 +1044,8 @@ int socket_ok(stb_teapot_socket_t s);
         {
             const tp_string_builder *cl_val = tp_headers_get(&req.headers, "Content-Length");
             size_t expected_body = 0;
-            if (cl_val && cl_val->items)
-            {
-                long n = atol(cl_val->items);
-                if (n > 0 && n <= (long)(4 * 1024 * 1024)) /* cap 4MB */
-                    expected_body = (size_t)n;
-            }
+            if (tp_parse_content_length_value(cl_val, &expected_body) && expected_body > (size_t)(4 * 1024 * 1024))
+                expected_body = 0;
             if (expected_body > req.body_length)
             {
                 req.body.count = req.body_length; /* drop trailing null so we can append */
