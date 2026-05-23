@@ -80,13 +80,14 @@ static int compile_exe(
 defer:
     nob_cmd_free(cmd);
     nob_da_free(dep_files);
-    return 0;
+    return ret;
 }
 
 const char *tests_and_examples[] = {
     TEST_DIR "low_level_test_stb_teapot.c",
     TEST_DIR "header_parse.c",
     TEST_DIR "unit_test_headers.c",
+    TEST_DIR "unit_test_request_response.c",
     EXAMPLE_DIR "threaded_server.c",
     EXAMPLE_DIR "thread_pool_server_crossplat.c",
 };
@@ -127,7 +128,10 @@ static int compile_all_exe(const char **exes, size_t test_count)
     }
 
 defer:
-    nob_procs_flush(&procs);
+    if (!nob_procs_flush(&procs))
+    {
+        ret = 1;
+    }
     nob_sb_free(sb);
     return ret;
 }

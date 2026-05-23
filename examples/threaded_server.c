@@ -24,7 +24,7 @@ teapot_response hello_handler(const teapot_request *req)
 
     /* Example: echo an X-Hello header if present (existence check) */
     tp_header_line h = {0};
-    int r = tp_headers_check(&req->headers, "X-Hello", NULL, &h);
+    tp_header_result r = tp_headers_check(&req->headers, "X-Hello", NULL, &h);
     if (r != TP_HEADER_NOT_FOUND)
     {
         tp_sb_appendf(&resp.body, "Hello (X-Hello=%s)\n", h.value.items ? h.value.items : "");
@@ -52,7 +52,7 @@ teapot_response echo_handler(const teapot_request *req)
 
     /* single-call check for existence + match */
     tp_header_line hdr = {0};
-    int res = tp_headers_check(&req->headers, "Content-Type", "text/plain", &hdr);
+    tp_header_result res = tp_headers_check(&req->headers, "Content-Type", "text/plain", &hdr);
     if (res == TP_HEADER_NOT_FOUND)
     {
         resp.status = 400;
@@ -87,8 +87,7 @@ static DWORD WINAPI client_thread_func(LPVOID arg)
     threaded_server *pc = (threaded_server *)arg;
     if (pc)
     {
-        teapot_handle_client_connection(&pc->server, pc->client_socket); /* pass server pointer if needed */
-        teapot_close(pc->client_socket);
+        teapot_handle_client_connection(&pc->server, pc->client_socket); /* closes client_socket */
         free(pc);
     }
     return 0;
