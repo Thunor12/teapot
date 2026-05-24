@@ -679,6 +679,7 @@ int socket_ok(stb_teapot_socket_t s);
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <limits.h>
 
     static void teapot_init(void)
     {
@@ -723,6 +724,23 @@ int socket_ok(stb_teapot_socket_t s);
 #else
         return (int)write(s, buf, (size_t)len);
 #endif
+    }
+
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
+    {
+        size_t sent = 0;
+        while (sent < len)
+        {
+            size_t remaining = len - sent;
+            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = teapot_write(s, buf + sent, chunk);
+            if (n <= 0)
+            {
+                return -1;
+            }
+            sent += (size_t)n;
+        }
+        return 0;
     }
 
     // -----------------------------------------------------
@@ -935,21 +953,43 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
         int header_len = snprintf(
-            header, sizeof(header),
+            NULL, 0,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (header_len < 0)
         {
             return -1;
         }
 
+        size_t header_size = (size_t)header_len + 1;
+        char *header = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, header_size);
+        if (header == NULL)
+        {
+            return -1;
+        }
+
+        int written = snprintf(
+            header, header_size,
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+        if (written != header_len)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+
+        if (teapot_write_all((stb_teapot_socket_t)client, header, (size_t)header_len) < 0)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+        TP_FREE(header);
+
         if (resp->body.count > 0)
         {
-            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
+            if (teapot_write_all((stb_teapot_socket_t)client, resp->body.items, resp->body.count) < 0)
             {
                 return -1;
             }
