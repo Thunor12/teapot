@@ -80,7 +80,7 @@ static int compile_exe(
 defer:
     nob_cmd_free(cmd);
     nob_da_free(dep_files);
-    return 0;
+    return ret;
 }
 
 const char *tests_and_examples[] = {
@@ -128,7 +128,10 @@ static int compile_all_exe(const char **exes, size_t test_count)
     }
 
 defer:
-    nob_procs_flush(&procs);
+    if (!nob_procs_flush(&procs))
+    {
+        ret = 1;
+    }
     nob_sb_free(sb);
     return ret;
 }
