@@ -542,7 +542,17 @@ int socket_ok(stb_teapot_socket_t s);
 
         const char *name_start = line;
         size_t name_len = (size_t)(colon - name_start);
-        name_len = tp_trim_ws(name_start, name_len);
+        size_t name_leading = tp_trim_leading_ws(name_start, name_len);
+        name_start += name_leading;
+        name_len -= name_leading;
+        while (name_len > 0 && isspace((unsigned char)name_start[name_len - 1]))
+        {
+            --name_len;
+        }
+        if (name_len == 0)
+        {
+            return 0;
+        }
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
         const char *vstart = colon + 1;
