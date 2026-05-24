@@ -743,6 +743,27 @@ int socket_ok(stb_teapot_socket_t s);
         return 0;
     }
 
+    static size_t teapot_parse_content_length_header(const tp_headers *headers)
+    {
+        const tp_string_builder *cl_val = tp_headers_get(headers, "Content-Length");
+        if (cl_val == NULL || cl_val->items == NULL)
+        {
+            return 0;
+        }
+
+        char *end = NULL;
+        unsigned long long value = strtoull(cl_val->items, &end, 10);
+        if (end == cl_val->items)
+        {
+            return 0;
+        }
+        if (value > (unsigned long long)SIZE_MAX)
+        {
+            return SIZE_MAX;
+        }
+        return (size_t)value;
+    }
+
     // -----------------------------------------------------
     // 🧩 Request Parsing (minimal, single-line HTTP/1.0)
     // -----------------------------------------------------
@@ -788,23 +809,10 @@ int socket_ok(stb_teapot_socket_t s);
             return -1;
         }
 
-        const char *ct = strstr(buffer, "Content-Type:");
-        const char *cl = strstr(buffer, "Content-Length:");
         const char *body_start = strstr(buffer, "\r\n\r\n");
 
-        char content_type[128] = "";
         size_t content_length = 0;
         const char *body = "";
-
-        if (ct)
-        {
-            sscanf(ct, "Content-Type: %127s", content_type);
-        }
-
-        if (cl)
-        {
-            sscanf(cl, "Content-Length: " TP_SIZE_T_FMT "", &content_length);
-        }
 
         if (body_start)
         {
@@ -817,6 +825,7 @@ int socket_ok(stb_teapot_socket_t s);
         if (body_start)
             header_size = (size_t)(body_start - buffer);
         tp_extract_header_keyval(&req->headers, buffer, header_size);
+        content_length = teapot_parse_content_length_header(&req->headers);
 
         req->method = method;
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
@@ -1023,14 +1032,9 @@ int socket_ok(stb_teapot_socket_t s);
 
         /* If Content-Length says we should have more body, read remaining bytes (body may be in next packet) */
         {
-            const tp_string_builder *cl_val = tp_headers_get(&req.headers, "Content-Length");
-            size_t expected_body = 0;
-            if (cl_val && cl_val->items)
-            {
-                long n = atol(cl_val->items);
-                if (n > 0 && n <= (long)(4 * 1024 * 1024)) /* cap 4MB */
-                    expected_body = (size_t)n;
-            }
+            size_t expected_body = teapot_parse_content_length_header(&req.headers);
+            if (expected_body > (size_t)(4 * 1024 * 1024)) /* cap 4MB */
+                expected_body = 0;
             if (expected_body > req.body_length)
             {
                 req.body.count = req.body_length; /* drop trailing null so we can append */
