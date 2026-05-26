@@ -880,7 +880,8 @@ int socket_ok(stb_teapot_socket_t s);
         size_t to_append = content_length;
         if (to_append > body_available)
             to_append = body_available;
-        tp_sb_append_buf(&req->body, body, to_append);
+        if (to_append > 0)
+            tp_sb_append_buf(&req->body, body, to_append);
         tp_sb_append_null(&req->body);
 
         req->body_length = to_append; /* may be less than Content-Length if body arrives in next packet */
