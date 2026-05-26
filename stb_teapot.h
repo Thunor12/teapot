@@ -679,12 +679,19 @@ int socket_ok(stb_teapot_socket_t s);
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <errno.h>
+#include <limits.h>
+#ifndef _WIN32
+#include <signal.h>
+#endif
 
     static void teapot_init(void)
     {
 #ifdef _WIN32
         WSADATA wsa;
         WSAStartup(MAKEWORD(2, 2), &wsa);
+#else
+        signal(SIGPIPE, SIG_IGN);
 #endif
     }
 
@@ -721,8 +728,45 @@ int socket_ok(stb_teapot_socket_t s);
 #ifdef _WIN32
         return send(s, buf, len, 0);
 #else
-        return (int)write(s, buf, (size_t)len);
+        int flags = 0;
+#ifdef MSG_NOSIGNAL
+        flags = MSG_NOSIGNAL;
 #endif
+        return (int)send(s, buf, (size_t)len, flags);
+#endif
+    }
+
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
+    {
+        size_t written = 0;
+        while (written < len)
+        {
+            size_t remaining = len - written;
+            if (remaining > (size_t)INT_MAX)
+            {
+                remaining = (size_t)INT_MAX;
+            }
+
+            int n = teapot_write(s, buf + written, (int)remaining);
+            if (n < 0)
+            {
+#ifndef _WIN32
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+#endif
+                return -1;
+            }
+            if (n == 0)
+            {
+                return -1;
+            }
+
+            written += (size_t)n;
+        }
+
+        return 0;
     }
 
     // -----------------------------------------------------
@@ -748,6 +792,34 @@ int socket_ok(stb_teapot_socket_t s);
         tp_headers_free(&req->headers);
     }
 
+    static int tp_parse_content_length_value(const tp_string_builder *value, size_t *out_length)
+    {
+        if (!value || !value->items || !out_length)
+        {
+            return 0;
+        }
+
+        char *end = NULL;
+        errno = 0;
+        unsigned long long parsed = strtoull(value->items, &end, 10);
+        if (end == value->items || errno == ERANGE || parsed > (unsigned long long)SIZE_MAX)
+        {
+            return 0;
+        }
+
+        while (end && *end != '\0')
+        {
+            if (!isspace((unsigned char)*end))
+            {
+                return 0;
+            }
+            ++end;
+        }
+
+        *out_length = (size_t)parsed;
+        return 1;
+    }
+
     static int parse_request(char *buffer, size_t size, teapot_request *req)
     {
         if (buffer == NULL || size == 0 || req == NULL)
@@ -764,29 +836,16 @@ int socket_ok(stb_teapot_socket_t s);
         char path_buf[512] = {0};
 
         sscanf(buffer, "%7s %511s", method_buf, path_buf);
-        int method = parse_method(method_buf);
+        teapot_method method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
         }
 
-        const char *ct = strstr(buffer, "Content-Type:");
-        const char *cl = strstr(buffer, "Content-Length:");
         const char *body_start = strstr(buffer, "\r\n\r\n");
 
-        char content_type[128] = "";
         size_t content_length = 0;
         const char *body = "";
-
-        if (ct)
-        {
-            sscanf(ct, "Content-Type: %127s", content_type);
-        }
-
-        if (cl)
-        {
-            sscanf(cl, "Content-Length: " TP_SIZE_T_FMT "", &content_length);
-        }
 
         if (body_start)
         {
@@ -799,6 +858,9 @@ int socket_ok(stb_teapot_socket_t s);
         if (body_start)
             header_size = (size_t)(body_start - buffer);
         tp_extract_header_keyval(&req->headers, buffer, header_size);
+
+        const tp_string_builder *cl_val = tp_headers_get(&req->headers, "Content-Length");
+        (void)tp_parse_content_length_value(cl_val, &content_length);
 
         req->method = method;
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
@@ -935,21 +997,43 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
         int header_len = snprintf(
-            header, sizeof(header),
+            NULL, 0,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (header_len < 0)
         {
             return -1;
         }
 
+        size_t header_size = (size_t)header_len + 1;
+        char *header = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, header_size);
+        if (!header)
+        {
+            return -1;
+        }
+
+        int written = snprintf(
+            header, header_size,
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+        if (written != header_len)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+
+        if (teapot_write_all((stb_teapot_socket_t)client, header, (size_t)header_len) < 0)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+        TP_FREE(header);
+
         if (resp->body.count > 0)
         {
-            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
+            if (teapot_write_all((stb_teapot_socket_t)client, resp->body.items, resp->body.count) < 0)
             {
                 return -1;
             }
@@ -987,9 +1071,9 @@ int socket_ok(stb_teapot_socket_t s);
             size_t expected_body = 0;
             if (cl_val && cl_val->items)
             {
-                long n = atol(cl_val->items);
-                if (n > 0 && n <= (long)(4 * 1024 * 1024)) /* cap 4MB */
-                    expected_body = (size_t)n;
+                size_t n = 0;
+                if (tp_parse_content_length_value(cl_val, &n) && n <= (size_t)(4 * 1024 * 1024)) /* cap 4MB */
+                    expected_body = n;
             }
             if (expected_body > req.body_length)
             {
