@@ -100,7 +100,7 @@ static void test_split_header_terminator(void)
     const char first[] = "POST /echo HTTP/1.1\r\nHost: local\r\nContent-Length: 5\r\n";
     const char second[] = "\r\nhello";
     ok("write split headers", write(sv[0], first, sizeof(first) - 1u) == (ssize_t)(sizeof(first) - 1u));
-    usleep(20000u);
+    sleep(1u);
     ok("write split terminator and body", write(sv[0], second, sizeof(second) - 1u) == (ssize_t)(sizeof(second) - 1u));
     shutdown(sv[0], SHUT_WR);
 
