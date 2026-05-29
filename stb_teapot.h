@@ -117,9 +117,13 @@ int socket_ok(stb_teapot_socket_t s);
 #define tp_da_append_many(da, new_items, new_items_count)                                         \
     do                                                                                            \
     {                                                                                             \
-        tp_da_reserve((da), (da)->count + (new_items_count));                                     \
-        memcpy((da)->items + (da)->count, (new_items), (new_items_count) * sizeof(*(da)->items)); \
-        (da)->count += (new_items_count);                                                         \
+        size_t tp__new_items_count = (new_items_count);                                           \
+        if (tp__new_items_count > 0)                                                              \
+        {                                                                                         \
+            tp_da_reserve((da), (da)->count + tp__new_items_count);                               \
+            memcpy((da)->items + (da)->count, (new_items), tp__new_items_count * sizeof(*(da)->items)); \
+            (da)->count += tp__new_items_count;                                                   \
+        }                                                                                         \
     } while (0)
 
 #define tp_da_resize(da, new_size)     \
