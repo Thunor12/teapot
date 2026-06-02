@@ -37,6 +37,7 @@ teapot_response hello_handler(const teapot_request *req)
     return resp;
 }
 
+
 teapot_response echo_handler(const teapot_request *req)
 {
     teapot_response resp = {0};
