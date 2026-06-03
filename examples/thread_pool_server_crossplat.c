@@ -244,6 +244,7 @@ static DWORD WINAPI worker_thread_fn(LPVOID arg)
     }
     return 0;
 }
+
 #else
 static void *worker_thread_fn(void *arg)
 {
