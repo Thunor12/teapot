@@ -390,7 +390,6 @@ int main(void)
     for (int i = 0; i < WORKER_COUNT; ++i)
         pthread_join(workers[i], NULL);
     free(workers);
-    teapot_close((stb_teapot_socket_t)listen_sock);
 #endif
 
     teapot_close((stb_teapot_socket_t)listen_sock);
