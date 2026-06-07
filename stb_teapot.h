@@ -600,7 +600,7 @@ int socket_ok(stb_teapot_socket_t s);
         return 1;
     }
 
-    void tp_extract_header_keyval(tp_headers *headers_parsed, char *raw_header, size_t header_size)
+    void tp_extract_header_keyval(tp_headers *headers_parsed, const char *raw_header, size_t header_size)
     {
         if (headers_parsed == NULL || raw_header == NULL || header_size == 0)
         {
@@ -907,7 +907,7 @@ int socket_ok(stb_teapot_socket_t s);
 
         char method_buf[8] = {0};
         memcpy(method_buf, buffer, method_len);
-        int method = parse_method(method_buf);
+        teapot_method method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
@@ -930,7 +930,7 @@ int socket_ok(stb_teapot_socket_t s);
 
         const char *headers_start = (line_end == header_end) ? header_end : line_end + 1;
         size_t header_fields_len = header_len - (size_t)(headers_start - buffer);
-        tp_extract_header_keyval(&req->headers, (char *)headers_start, header_fields_len);
+        tp_extract_header_keyval(&req->headers, headers_start, header_fields_len);
 
         size_t content_length = 0;
         int cl_result = tp_parse_content_length(&req->headers, &content_length);
