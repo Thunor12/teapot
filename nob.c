@@ -129,7 +129,10 @@ static int compile_all_exe(const char **exes, size_t test_count)
     }
 
 defer:
-    nob_procs_flush(&procs);
+    if (!nob_procs_flush(&procs))
+    {
+        ret = 1;
+    }
     nob_sb_free(sb);
     return ret;
 }
