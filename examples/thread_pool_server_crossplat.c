@@ -134,6 +134,7 @@ static void job_queue_push(job_queue_t *q, stb_teapot_socket_t client)
     job_t *j = (job_t *)malloc(sizeof(job_t));
     if (!j)
     {
+        teapot_close(client);
         return;
     }
 
