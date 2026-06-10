@@ -92,6 +92,7 @@ static DWORD WINAPI client_thread_func(LPVOID arg)
     }
     return 0;
 }
+
 #else
 static void *client_thread_func(void *arg)
 {
