@@ -30,6 +30,7 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -337,6 +338,9 @@ int socket_ok(stb_teapot_socket_t s);
 #include <stdarg.h>
 /* portable case-insensitive compare helper */
 #include <ctype.h>
+#ifndef _WIN32
+#include <errno.h>
+#endif
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -711,18 +715,38 @@ int socket_ok(stb_teapot_socket_t s);
 #endif
     }
 
-    static int teapot_write(stb_teapot_socket_t s, const char *buf, int len)
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
     {
-        if (len <= 0)
+        size_t written = 0;
+
+        while (written < len)
         {
-            return 0;
-        }
+            size_t remaining = len - written;
+            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = 0;
 
 #ifdef _WIN32
-        return send(s, buf, len, 0);
+            n = send(s, buf + written, chunk, 0);
 #else
-        return (int)write(s, buf, (size_t)len);
+#ifdef MSG_NOSIGNAL
+            n = (int)send(s, buf + written, (size_t)chunk, MSG_NOSIGNAL);
+#else
+            n = (int)send(s, buf + written, (size_t)chunk, 0);
 #endif
+            if (n < 0 && errno == EINTR)
+            {
+                continue;
+            }
+#endif
+            if (n <= 0)
+            {
+                return -1;
+            }
+
+            written += (size_t)n;
+        }
+
+        return 0;
     }
 
     // -----------------------------------------------------
@@ -935,21 +959,54 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
+        for (const char *p = ct; *p != '\0'; ++p)
+        {
+            if (*p == '\r' || *p == '\n')
+            {
+                ct = "text/plain";
+                break;
+            }
+        }
+
         int header_len = snprintf(
-            header, sizeof(header),
+            NULL, 0,
             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
             resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
 
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (header_len < 0)
+        {
+            return -1;
+        }
+
+        size_t header_size = (size_t)header_len + 1;
+        char *header = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, header_size);
+        if (header == NULL)
+        {
+            return -1;
+        }
+
+        int formatted = snprintf(
+            header, header_size,
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+
+        if (formatted != header_len)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+
+        int ret = teapot_write_all((stb_teapot_socket_t)client, header, (size_t)header_len);
+        TP_FREE(header);
+        if (ret < 0)
         {
             return -1;
         }
 
         if (resp->body.count > 0)
         {
-            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
+            if (teapot_write_all((stb_teapot_socket_t)client, resp->body.items, resp->body.count) < 0)
             {
                 return -1;
             }
