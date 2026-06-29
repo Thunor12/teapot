@@ -49,7 +49,6 @@ teapot_response hello_handler(const teapot_request *req)
     else
         tp_sb_appendf(&resp.body, "Hello from GET /hello\n");
 
-    tp_sb_append_null(&resp.body);
     return resp;
 }
 
@@ -62,7 +61,6 @@ teapot_response echo_handler(const teapot_request *req)
     {
         resp.status = 400;
         tp_sb_appendf(&resp.body, "Bad Request: No body provided\n");
-        tp_sb_append_null(&resp.body);
         return resp;
     }
 
@@ -72,7 +70,6 @@ teapot_response echo_handler(const teapot_request *req)
     {
         resp.status = 400;
         tp_sb_appendf(&resp.body, "Bad Request: Missing Content-Type header\n");
-        tp_sb_append_null(&resp.body);
         return resp;
     }
     if (res != TP_HEADER_MATCH)
@@ -81,7 +78,6 @@ teapot_response echo_handler(const teapot_request *req)
         tp_sb_appendf(&resp.body,
                       "Unsupported Media Type (%s): Only text/plain is supported\n",
                       hdr.value.items ? hdr.value.items : "");
-        tp_sb_append_null(&resp.body);
         return resp;
     }
 
@@ -89,7 +85,6 @@ teapot_response echo_handler(const teapot_request *req)
     tp_sb_appendf(&resp.body,
                   "POST /echo received!\nBody (%zu bytes) %s:\n%s\n",
                   req->body_length, hdr.value.items ? hdr.value.items : "", req->body.items ? req->body.items : "");
-    tp_sb_append_null(&resp.body);
     return resp;
 }
 
