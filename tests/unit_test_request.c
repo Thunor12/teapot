@@ -5,7 +5,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 
 static int failures = 0;
@@ -60,10 +59,7 @@ static ssize_t read_all_fd(int fd, char *buf, size_t cap)
 
 static void short_pause(void)
 {
-    struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 50 * 1000 * 1000;
-    nanosleep(&ts, NULL);
+    sleep(1);
 }
 
 static teapot_response echo_handler(const teapot_request *req)
