@@ -72,6 +72,7 @@ static int run_server_request(const teapot_route *routes, size_t route_count,
         return -1;
     }
 
+    fflush(NULL);
     pid_t child = fork();
     if (child < 0)
     {
@@ -89,7 +90,7 @@ static int run_server_request(const teapot_route *routes, size_t route_count,
             .route_count = route_count,
         };
         int rc = teapot_handle_client_connection(&server, (stb_teapot_socket_t)sv[1]);
-        exit(rc == 0 ? 0 : 2);
+        _exit(rc == 0 ? 0 : 2);
     }
 
     close(sv[1]);
