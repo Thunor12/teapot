@@ -905,7 +905,7 @@ int socket_ok(stb_teapot_socket_t s);
         char path_buf[512] = {0};
 
         sscanf(buffer, "%7s %511s", method_buf, path_buf);
-        int method = parse_method(method_buf);
+        teapot_method method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
