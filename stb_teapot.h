@@ -831,7 +831,7 @@ int socket_ok(stb_teapot_socket_t s);
         {
             return -1;
         }
-        int method = parse_method(method_buf);
+        teapot_method method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
