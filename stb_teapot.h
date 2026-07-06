@@ -543,6 +543,9 @@ int socket_ok(stb_teapot_socket_t s);
 
         const char *name_start = line;
         size_t name_len = (size_t)(colon - name_start);
+        size_t name_skip = tp_trim_leading_ws(name_start, name_len);
+        name_start += name_skip;
+        name_len -= name_skip;
         name_len = tp_trim_ws(name_start, name_len);
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
@@ -570,6 +573,11 @@ int socket_ok(stb_teapot_socket_t s);
         if (vlen > (size_t)TP_MAX_HEADER_VALUE_LEN)
         {
             vlen = (size_t)TP_MAX_HEADER_VALUE_LEN;
+        }
+
+        if (name_len == 0)
+        {
+            return 0;
         }
 
         tp_header_line header_line = {0};
