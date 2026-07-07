@@ -88,7 +88,6 @@ static DWORD WINAPI client_thread_func(LPVOID arg)
     if (pc)
     {
         teapot_handle_client_connection(&pc->server, pc->client_socket); /* pass server pointer if needed */
-        teapot_close(pc->client_socket);
         free(pc);
     }
     return 0;
@@ -100,7 +99,6 @@ static void *client_thread_func(void *arg)
     if (pc)
     {
         teapot_handle_client_connection(&pc->server, pc->client_socket); /* pass server pointer if needed */
-        teapot_close(pc->client_socket);
         free(pc);
     }
     return NULL;
