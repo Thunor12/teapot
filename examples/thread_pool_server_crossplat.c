@@ -134,6 +134,7 @@ static void job_queue_push(job_queue_t *q, stb_teapot_socket_t client)
     job_t *j = (job_t *)malloc(sizeof(job_t));
     if (!j)
     {
+        teapot_close(client);
         return;
     }
 
@@ -390,7 +391,6 @@ int main(void)
     for (int i = 0; i < WORKER_COUNT; ++i)
         pthread_join(workers[i], NULL);
     free(workers);
-    teapot_close((stb_teapot_socket_t)listen_sock);
 #endif
 
     teapot_close((stb_teapot_socket_t)listen_sock);
