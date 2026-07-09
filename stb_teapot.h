@@ -601,7 +601,7 @@ int socket_ok(stb_teapot_socket_t s);
         return 1;
     }
 
-    void tp_extract_header_keyval(tp_headers *headers_parsed, char *raw_header, size_t header_size)
+    void tp_extract_header_keyval(tp_headers *headers_parsed, const char *raw_header, size_t header_size)
     {
         if (headers_parsed == NULL || raw_header == NULL || header_size == 0)
         {
@@ -872,7 +872,7 @@ int socket_ok(stb_teapot_socket_t s);
         {
             return -1;
         }
-        int method = parse_method(method_buf);
+        teapot_method method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
@@ -893,7 +893,7 @@ int socket_ok(stb_teapot_socket_t s);
         /* Extract structured headers after the request line. */
         const char *headers_start = request_line_end + 2;
         size_t header_size = (size_t)(header_end - headers_start);
-        tp_extract_header_keyval(&req->headers, (char *)headers_start, header_size);
+        tp_extract_header_keyval(&req->headers, headers_start, header_size);
         if (teapot_request_content_length(req, &content_length) != 0)
         {
             return -1;
