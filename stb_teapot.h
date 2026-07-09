@@ -892,7 +892,7 @@ int socket_ok(stb_teapot_socket_t s);
 
         /* Extract structured headers after the request line. */
         const char *headers_start = request_line_end + 2;
-        size_t header_size = (size_t)(header_end - headers_start);
+        size_t header_size = header_end > headers_start ? (size_t)(header_end - headers_start) : 0;
         tp_extract_header_keyval(&req->headers, headers_start, header_size);
         if (teapot_request_content_length(req, &content_length) != 0)
         {
