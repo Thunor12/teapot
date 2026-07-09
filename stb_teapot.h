@@ -59,6 +59,10 @@ int socket_ok(stb_teapot_socket_t s);
 #define TP_DA_INIT_CAP 256
 #endif
 
+#ifndef TEAPOT_MAX_BODY_SIZE
+#define TEAPOT_MAX_BODY_SIZE (4u * 1024u * 1024u)
+#endif
+
 #ifdef __cplusplus
 #define TP_DECLTYPE_CAST(T) (decltype(T))
 #else
@@ -114,12 +118,16 @@ int socket_ok(stb_teapot_socket_t s);
     } while (0)
 
 // Append several items to a dynamic array
-#define tp_da_append_many(da, new_items, new_items_count)                                         \
-    do                                                                                            \
-    {                                                                                             \
-        tp_da_reserve((da), (da)->count + (new_items_count));                                     \
-        memcpy((da)->items + (da)->count, (new_items), (new_items_count) * sizeof(*(da)->items)); \
-        (da)->count += (new_items_count);                                                         \
+#define tp_da_append_many(da, new_items, new_items_count)                                           \
+    do                                                                                              \
+    {                                                                                               \
+        size_t tp_da_new_items_count__ = (new_items_count);                                         \
+        if (tp_da_new_items_count__ > 0)                                                            \
+        {                                                                                           \
+            tp_da_reserve((da), (da)->count + tp_da_new_items_count__);                             \
+            memcpy((da)->items + (da)->count, (new_items), tp_da_new_items_count__ * sizeof(*(da)->items)); \
+            (da)->count += tp_da_new_items_count__;                                                 \
+        }                                                                                           \
     } while (0)
 
 #define tp_da_resize(da, new_size)     \
@@ -542,7 +550,14 @@ int socket_ok(stb_teapot_socket_t s);
 
         const char *name_start = line;
         size_t name_len = (size_t)(colon - name_start);
+        size_t name_leading = tp_trim_leading_ws(name_start, name_len);
+        name_start += name_leading;
+        name_len -= name_leading;
         name_len = tp_trim_ws(name_start, name_len);
+        if (name_len == 0)
+        {
+            return 0;
+        }
 
         /* value: skip ':' and leading whitespace, then trim trailing whitespace */
         const char *vstart = colon + 1;
@@ -679,6 +694,13 @@ int socket_ok(stb_teapot_socket_t s);
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <limits.h>
+
+#ifndef _WIN32
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+#endif
 
     static void teapot_init(void)
     {
@@ -721,8 +743,25 @@ int socket_ok(stb_teapot_socket_t s);
 #ifdef _WIN32
         return send(s, buf, len, 0);
 #else
-        return (int)write(s, buf, (size_t)len);
+        return (int)send(s, buf, (size_t)len, MSG_NOSIGNAL);
 #endif
+    }
+
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
+    {
+        size_t total = 0;
+        while (total < len)
+        {
+            size_t remaining = len - total;
+            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = teapot_write(s, buf + total, chunk);
+            if (n <= 0)
+            {
+                return -1;
+            }
+            total += (size_t)n;
+        }
+        return 0;
     }
 
     // -----------------------------------------------------
@@ -730,13 +769,13 @@ int socket_ok(stb_teapot_socket_t s);
     // -----------------------------------------------------
     static teapot_method parse_method(const char *s)
     {
-        if (strncmp(s, "GET", 3) == 0)
+        if (strcmp(s, "GET") == 0)
             return TEAPOT_GET;
-        if (strncmp(s, "POST", 4) == 0)
+        if (strcmp(s, "POST") == 0)
             return TEAPOT_POST;
-        if (strncmp(s, "PUT", 3) == 0)
+        if (strcmp(s, "PUT") == 0)
             return TEAPOT_PUT;
-        if (strncmp(s, "DELETE", 6) == 0)
+        if (strcmp(s, "DELETE") == 0)
             return TEAPOT_DELETE;
         return TEAPOT_UNKNOWN;
     }
@@ -746,6 +785,72 @@ int socket_ok(stb_teapot_socket_t s);
         tp_sb_free(req->path);
         tp_sb_free(req->body);
         tp_headers_free(&req->headers);
+    }
+
+    static int teapot_parse_content_length_value(const tp_string_builder *cl_val, size_t *out_length)
+    {
+        size_t value = 0;
+        const char *p = NULL;
+
+        if (out_length == NULL)
+        {
+            return -1;
+        }
+        *out_length = 0;
+
+        if (cl_val == NULL || cl_val->items == NULL)
+        {
+            return 0;
+        }
+
+        p = cl_val->items;
+        while (*p != '\0' && isspace((unsigned char)*p))
+        {
+            ++p;
+        }
+
+        if (*p == '\0')
+        {
+            return -1;
+        }
+
+        while (*p != '\0' && !isspace((unsigned char)*p))
+        {
+            if (!isdigit((unsigned char)*p))
+            {
+                return -1;
+            }
+
+            size_t digit = (size_t)(*p - '0');
+            if (value > (((size_t)TEAPOT_MAX_BODY_SIZE - digit) / 10u))
+            {
+                return -1;
+            }
+            value = value * 10u + digit;
+            ++p;
+        }
+
+        while (*p != '\0' && isspace((unsigned char)*p))
+        {
+            ++p;
+        }
+
+        if (*p != '\0')
+        {
+            return -1;
+        }
+
+        *out_length = value;
+        return 0;
+    }
+
+    static int teapot_request_content_length(const teapot_request *req, size_t *out_length)
+    {
+        if (req == NULL)
+        {
+            return -1;
+        }
+        return teapot_parse_content_length_value(tp_headers_get(&req->headers, "Content-Length"), out_length);
     }
 
     static int parse_request(char *buffer, size_t size, teapot_request *req)
@@ -763,42 +868,36 @@ int socket_ok(stb_teapot_socket_t s);
         char method_buf[8] = {0};
         char path_buf[512] = {0};
 
-        sscanf(buffer, "%7s %511s", method_buf, path_buf);
+        if (sscanf(buffer, "%7s %511s", method_buf, path_buf) != 2)
+        {
+            return -1;
+        }
         int method = parse_method(method_buf);
         if (method == TEAPOT_UNKNOWN)
         {
             return -1;
         }
 
-        const char *ct = strstr(buffer, "Content-Type:");
-        const char *cl = strstr(buffer, "Content-Length:");
-        const char *body_start = strstr(buffer, "\r\n\r\n");
-
-        char content_type[128] = "";
+        const char *request_line_end = strstr(buffer, "\r\n");
+        const char *header_end = strstr(buffer, "\r\n\r\n");
+        const char *body_start = NULL;
         size_t content_length = 0;
-        const char *body = "";
 
-        if (ct)
+        if (request_line_end == NULL || header_end == NULL || request_line_end > header_end)
         {
-            sscanf(ct, "Content-Type: %127s", content_type);
+            return -1;
         }
 
-        if (cl)
-        {
-            sscanf(cl, "Content-Length: " TP_SIZE_T_FMT "", &content_length);
-        }
+        body_start = header_end + 4;
 
-        if (body_start)
+        /* Extract structured headers after the request line. */
+        const char *headers_start = request_line_end + 2;
+        size_t header_size = (size_t)(header_end - headers_start);
+        tp_extract_header_keyval(&req->headers, (char *)headers_start, header_size);
+        if (teapot_request_content_length(req, &content_length) != 0)
         {
-            body_start += 4;
-            body = body_start;
+            return -1;
         }
-
-        /* extract headers from start..(body_start) */
-        size_t header_size = size;
-        if (body_start)
-            header_size = (size_t)(body_start - buffer);
-        tp_extract_header_keyval(&req->headers, buffer, header_size);
 
         req->method = method;
         tp_sb_append_buf(&req->path, path_buf, strlen(path_buf));
@@ -806,12 +905,12 @@ int socket_ok(stb_teapot_socket_t s);
 
         /* Only append body bytes that are actually in the buffer (body may arrive in a later packet) */
         size_t body_available = 0;
-        if (body_start && size > (size_t)(body - buffer))
-            body_available = size - (size_t)(body - buffer);
+        if (size > (size_t)(body_start - buffer))
+            body_available = size - (size_t)(body_start - buffer);
         size_t to_append = content_length;
         if (to_append > body_available)
             to_append = body_available;
-        tp_sb_append_buf(&req->body, body, to_append);
+        tp_sb_append_buf(&req->body, body_start, to_append);
         tp_sb_append_null(&req->body);
 
         req->body_length = to_append; /* may be less than Content-Length if body arrives in next packet */
@@ -835,7 +934,10 @@ int socket_ok(stb_teapot_socket_t s);
             {
                 size_t prefix_len = path_len - 1;
                 if (strncmp(r->path, req->path.items, prefix_len) == 0 &&
-                    (req->path.items[prefix_len] == '\0' || req->path.items[prefix_len] == '/' || req->path.items[prefix_len] == '?'))
+                    (prefix_len > 0 && r->path[prefix_len - 1] == '/'
+                         ? 1
+                         : (req->path.items[prefix_len] == '\0' || req->path.items[prefix_len] == '/' ||
+                            req->path.items[prefix_len] == '?')))
                 {
                     return r->handler;
                 }
@@ -935,25 +1037,99 @@ int socket_ok(stb_teapot_socket_t s);
         if (!socket_ok((stb_teapot_socket_t)client) || !resp)
             return -1;
 
-        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        int header_len = snprintf(
-            header, sizeof(header),
-            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
-            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
+        if (strpbrk(ct, "\r\n") != NULL)
         {
             return -1;
         }
 
+        int header_len = snprintf(
+            NULL, 0,
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+
+        if (header_len < 0)
+        {
+            return -1;
+        }
+
+        char *header = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, (size_t)header_len + 1u);
+        if (header == NULL)
+        {
+            return -1;
+        }
+
+        int written = snprintf(
+            header, (size_t)header_len + 1u,
+            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+        if (written != header_len)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+
+        if (teapot_write_all((stb_teapot_socket_t)client, header, (size_t)header_len) < 0)
+        {
+            TP_FREE(header);
+            return -1;
+        }
+        TP_FREE(header);
+
         if (resp->body.count > 0)
         {
-            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
+            if (teapot_write_all((stb_teapot_socket_t)client, resp->body.items, resp->body.count) < 0)
             {
                 return -1;
             }
         }
+        return 0;
+    }
+
+    static void teapot_send_bad_request(stb_teapot_socket_t client)
+    {
+        teapot_response resp;
+        teapot_response_init(&resp, TEAPOT_HTTP_BAD_REQUEST);
+        tp_sb_appendf(&resp.body, "400 Bad Request\n");
+        (void)teapot_send_response(client, &resp);
+        teapot_response_free(&resp);
+    }
+
+    static int teapot_complete_request_body(stb_teapot_socket_t client, teapot_request *req)
+    {
+        size_t expected_body = 0;
+        if (teapot_request_content_length(req, &expected_body) != 0)
+        {
+            return -1;
+        }
+
+        if (expected_body <= req->body_length)
+        {
+            return 0;
+        }
+
+        req->body.count = req->body_length; /* drop trailing null so we can append */
+        while (req->body_length < expected_body)
+        {
+            char read_buf[4096];
+            size_t to_read = expected_body - req->body_length;
+            if (to_read > sizeof(read_buf))
+            {
+                to_read = sizeof(read_buf);
+            }
+
+            int n = teapot_read((stb_teapot_socket_t)client, read_buf, (int)to_read);
+            if (n <= 0)
+            {
+                tp_sb_append_null(&req->body);
+                return -1;
+            }
+
+            tp_sb_append_buf(&req->body, read_buf, (size_t)n);
+            req->body_length += (size_t)n;
+        }
+
+        tp_sb_append_null(&req->body);
         return 0;
     }
 
@@ -977,37 +1153,18 @@ int socket_ok(stb_teapot_socket_t s);
         if (parse_request(buffer, (size_t)received, &req) < 0)
         {
             free_request(&req);
+            teapot_send_bad_request(client);
             teapot_close((stb_teapot_socket_t)client);
             return -1;
         }
 
-        /* If Content-Length says we should have more body, read remaining bytes (body may be in next packet) */
+        /* If Content-Length says we should have more body, read remaining bytes before routing. */
+        if (teapot_complete_request_body(client, &req) != 0)
         {
-            const tp_string_builder *cl_val = tp_headers_get(&req.headers, "Content-Length");
-            size_t expected_body = 0;
-            if (cl_val && cl_val->items)
-            {
-                long n = atol(cl_val->items);
-                if (n > 0 && n <= (long)(4 * 1024 * 1024)) /* cap 4MB */
-                    expected_body = (size_t)n;
-            }
-            if (expected_body > req.body_length)
-            {
-                req.body.count = req.body_length; /* drop trailing null so we can append */
-                while (req.body_length < expected_body)
-                {
-                    char read_buf[4096];
-                    size_t to_read = expected_body - req.body_length;
-                    if (to_read > sizeof(read_buf))
-                        to_read = sizeof(read_buf);
-                    int n = teapot_read((stb_teapot_socket_t)client, read_buf, (int)to_read);
-                    if (n <= 0)
-                        break;
-                    tp_sb_append_buf(&req.body, read_buf, (size_t)n);
-                    req.body_length += (size_t)n;
-                }
-                tp_sb_append_null(&req.body);
-            }
+            free_request(&req);
+            teapot_send_bad_request(client);
+            teapot_close((stb_teapot_socket_t)client);
+            return -1;
         }
 
         teapot_handler handler = teapot_find_handler(server, &req);
