@@ -159,6 +159,94 @@ static int have_valgrind(void)
 #endif
 }
 
+static int path_has_cmd(const char *name)
+{
+    const char *path = getenv("PATH");
+    if (path == NULL)
+        return 0;
+
+    char buf[512];
+    const char *p = path;
+    while (*p != '\0')
+    {
+        const char *colon = strchr(p, ':');
+        size_t n = colon ? (size_t)(colon - p) : strlen(p);
+        if (n > 0 && n < 400)
+        {
+            snprintf(buf, sizeof(buf), "%.*s/%s", (int)n, p, name);
+            if (nob_file_exists(buf) > 0)
+                return 1;
+        }
+        if (colon == NULL)
+            break;
+        p = colon + 1;
+    }
+    return 0;
+}
+
+static int have_clang(void)
+{
+#ifdef _WIN32
+    return 0;
+#else
+    return nob_file_exists("/usr/bin/clang") > 0 || nob_file_exists("/usr/local/bin/clang") > 0 || path_has_cmd("clang");
+#endif
+}
+
+static int run_fuzz(int argc, char **argv)
+{
+#ifdef _WIN32
+    (void)argc;
+    (void)argv;
+    nob_log(NOB_ERROR, "fuzzing is POSIX-only");
+    return 1;
+#else
+    int ret = 0;
+    Nob_Cmd cmd = {0};
+
+    if (!have_clang())
+    {
+        nob_log(NOB_ERROR, "clang not found. On Ubuntu: sudo apt-get install clang");
+        return 1;
+    }
+
+    if (!nob_mkdir_if_not_exists(BUILD_DIR))
+        return 1;
+    if (!nob_mkdir_if_not_exists(BUILD_DIR "fuzz_corpus"))
+        return 1;
+
+    nob_cmd_append(&cmd, "cp", "-a", TEST_DIR "fuzz_corpus/.", BUILD_DIR "fuzz_corpus/");
+    if (!nob_cmd_run(&cmd))
+    {
+        ret = 1;
+        goto defer;
+    }
+    nob_cmd_free(cmd);
+    cmd = (Nob_Cmd){0};
+
+    nob_cmd_append(&cmd, "clang", "-O1", "-g", "-std=c17", "-fsanitize=fuzzer,address,undefined", "-o",
+                   BUILD_DIR "fuzz_serve", TEST_DIR "fuzz_serve.c");
+    if (!nob_cmd_run(&cmd))
+    {
+        ret = 1;
+        goto defer;
+    }
+    nob_cmd_free(cmd);
+    cmd = (Nob_Cmd){0};
+
+    nob_cmd_append(&cmd, BUILD_DIR "fuzz_serve", BUILD_DIR "fuzz_corpus", "-max_total_time=30", "-timeout=2",
+                   "-artifact_prefix=" BUILD_DIR "fuzz-");
+    for (int i = 0; i < argc; i++)
+        nob_cmd_append(&cmd, argv[i]);
+    if (!nob_cmd_run(&cmd))
+        ret = 1;
+
+defer:
+    nob_cmd_free(cmd);
+    return ret;
+#endif
+}
+
 static int run_unit_tests(void)
 {
     int ret = 0;
@@ -205,6 +293,13 @@ int main(int argc, char **argv)
     }
 
     nob_shift_args(&argc, &argv); // Ignore program name
+
+    if (argc > 0 && 0 == strcmp(argv[0], "fuzz"))
+    {
+        nob_shift_args(&argc, &argv);
+        ret = run_fuzz(argc, argv);
+        goto defer;
+    }
 
     // Parse args
     for (size_t i = 1; i <= argc; i++)
