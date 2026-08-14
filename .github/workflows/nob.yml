@@ -21,8 +21,12 @@ jobs:
       - name: build and test
         run: cc -o nob nob.c && ./nob
 
-      - name: header stays under 1000 lines
-        run: test "$(wc -l < stb_teapot.h)" -lt 1000
+      - name: amalgam is generated and within budget
+        run: |
+          cc -o nob nob.c && ./nob amalgamate
+          git diff --exit-code stb_teapot.h
+          test "$(wc -l < stb_teapot.h)" -lt 1800
+          for f in src/*.c src/*.h; do test "$(wc -l < "$f")" -lt 400; done
 
   fuzz:
     runs-on: ubuntu-latest

@@ -195,6 +195,134 @@ static int have_clang(void)
 #endif
 }
 
+#define AMALGAM_BANNER "/* GENERATED — do not edit. Source: src/ */\n"
+#define AMALGAM_HEADER "src/teapot.h"
+#define AMALGAM_OUT "stb_teapot.h"
+
+static const char *amalgam_c_files[] = {
+    "src/tp_platform.c",
+    "src/tp_parse.c",
+    "src/tp_http.c",
+    "src/tp_listen.c",
+};
+
+static int amalgamate_skip_include(const char *line, size_t n)
+{
+    size_t i = 0;
+    while (i < n && (line[i] == ' ' || line[i] == '\t'))
+        i++;
+    if (i + 8 > n || memcmp(line + i, "#include", 8) != 0)
+        return 0;
+    i += 8;
+    while (i < n && (line[i] == ' ' || line[i] == '\t'))
+        i++;
+    if (i >= n || line[i] != '"')
+        return 0;
+    i++;
+    size_t start = i;
+    while (i < n && line[i] != '"')
+        i++;
+    if (i >= n)
+        return 0;
+    const char *path = line + start;
+    size_t path_n = i - start;
+    size_t b = 0;
+    for (size_t k = 0; k < path_n; k++)
+    {
+        if (path[k] == '/' || path[k] == '\\')
+            b = k + 1;
+    }
+    const char *base = path + b;
+    size_t bn = path_n - b;
+    if (bn == 8 && memcmp(base, "teapot.h", 8) == 0)
+        return 1;
+    if (bn >= 5 && memcmp(base, "tp_", 3) == 0 && base[bn - 2] == '.' && base[bn - 1] == 'h')
+        return 1;
+    return 0;
+}
+
+static int amalgamate_append_c(Nob_String_Builder *out, const char *path)
+{
+    Nob_String_Builder file = {0};
+    if (!nob_read_entire_file(path, &file))
+    {
+        nob_sb_free(file);
+        return 1;
+    }
+
+    size_t i = 0;
+    while (i < file.count)
+    {
+        size_t line_start = i;
+        while (i < file.count && file.items[i] != '\n')
+            i++;
+        int have_nl = i < file.count;
+        size_t raw_n = i - line_start;
+        if (have_nl)
+            i++;
+        size_t cmp_n = raw_n;
+        if (cmp_n > 0 && file.items[line_start + cmp_n - 1] == '\r')
+            cmp_n--;
+        if (amalgamate_skip_include(file.items + line_start, cmp_n))
+            continue;
+        nob_sb_append_buf(out, file.items + line_start, raw_n);
+        if (have_nl)
+            nob_sb_append_cstr(out, "\n");
+    }
+
+    if (out->count == 0 || out->items[out->count - 1] != '\n')
+        nob_sb_append_cstr(out, "\n");
+
+    nob_sb_free(file);
+    return 0;
+}
+
+static int amalgamate(void)
+{
+    int ret = 0;
+    Nob_String_Builder out = {0};
+
+    nob_sb_append_cstr(&out, AMALGAM_BANNER);
+
+    if (!nob_read_entire_file(AMALGAM_HEADER, &out))
+    {
+        ret = 1;
+        goto defer;
+    }
+    if (out.count == 0 || out.items[out.count - 1] != '\n')
+        nob_sb_append_cstr(&out, "\n");
+
+    nob_sb_append_cstr(&out, "#ifdef STB_TEAPOT_IMPLEMENTATION\n");
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(amalgam_c_files); i++)
+    {
+        if (0 != amalgamate_append_c(&out, amalgam_c_files[i]))
+        {
+            ret = 1;
+            goto defer;
+        }
+    }
+
+    nob_sb_append_cstr(&out, "#endif // STB_TEAPOT_IMPLEMENTATION\n");
+    nob_sb_append_cstr(&out, "\n");
+    nob_sb_append_cstr(&out, "#ifdef __cplusplus\n");
+    nob_sb_append_cstr(&out, "}\n");
+    nob_sb_append_cstr(&out, "#endif\n");
+    nob_sb_append_cstr(&out, "#endif // STB_TEAPOT_H\n");
+
+    if (!nob_write_entire_file(AMALGAM_OUT, out.items, out.count))
+    {
+        ret = 1;
+        goto defer;
+    }
+
+    nob_log(NOB_INFO, "Generated %s", AMALGAM_OUT);
+
+defer:
+    nob_sb_free(out);
+    return ret;
+}
+
 static int run_fuzz(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -296,9 +424,20 @@ int main(int argc, char **argv)
 
     nob_shift_args(&argc, &argv); // Ignore program name
 
+    if (argc > 0 && 0 == strcmp(argv[0], "amalgamate"))
+    {
+        ret = amalgamate();
+        goto defer;
+    }
+
     if (argc > 0 && 0 == strcmp(argv[0], "fuzz"))
     {
         nob_shift_args(&argc, &argv);
+        if (0 != amalgamate())
+        {
+            ret = 1;
+            goto defer;
+        }
         ret = run_fuzz(argc, argv);
         goto defer;
     }
@@ -314,6 +453,12 @@ int main(int argc, char **argv)
             nob_delete_file(BUILD_DIR);
             goto defer;
         }
+    }
+
+    if (0 != amalgamate())
+    {
+        ret = 1;
+        goto defer;
     }
 
     if (0 != compile_all_exe(tests_and_examples, NOB_ARRAY_LEN(tests_and_examples)))

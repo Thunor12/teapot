@@ -1,3 +1,4 @@
+/* GENERATED — do not edit. Source: src/ */
 #ifndef STB_TEAPOT_H
 #define STB_TEAPOT_H
 
@@ -311,8 +312,6 @@ extern "C"
 
 #ifdef STB_TEAPOT_IMPLEMENTATION
 
-#include <stdarg.h>
-#include <ctype.h>
 #include <limits.h>
 #include <stdlib.h>
 
@@ -332,6 +331,79 @@ extern "C"
         return s >= 0;
     }
 #endif
+
+    static void teapot_init(void)
+    {
+#ifdef _WIN32
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
+    }
+
+    void teapot_close(stb_teapot_socket_t s)
+    {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+    }
+
+    /* One listener per process is the supported model on Windows (WSAStartup in listener_open). */
+    void teapot_listener_close(stb_teapot_socket_t listen_sock)
+    {
+        teapot_close(listen_sock);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
+
+    static int teapot_read(stb_teapot_socket_t s, char *buf, int len)
+    {
+        if (len <= 0)
+        {
+            return 0;
+        }
+
+#ifdef _WIN32
+        return recv(s, buf, len, 0);
+#else
+        return (int)read(s, buf, (size_t)len);
+#endif
+    }
+
+    static int teapot_write(stb_teapot_socket_t s, const char *buf, int len)
+    {
+        if (len <= 0)
+            return 0;
+#ifdef _WIN32
+        return send(s, buf, len, 0);
+#else
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+        return (int)send(s, buf, (size_t)len, MSG_NOSIGNAL);
+#endif
+    }
+
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
+    {
+        size_t total = 0;
+        while (total < len)
+        {
+            size_t remaining = len - total;
+            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = teapot_write(s, buf + total, chunk);
+            if (n <= 0)
+                return -1;
+            total += (size_t)n;
+        }
+        return 0;
+    }
+
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 
     static int tp_stricmp(const char *a, const char *b)
     {
@@ -378,51 +450,6 @@ extern "C"
                 return &h->items[i];
         }
         return NULL;
-    }
-
-    static const char *teapot_status_to_str(int status)
-    {
-        switch (status)
-        {
-        case TEAPOT_HTTP_OK:
-            return "OK";
-        case TEAPOT_HTTP_CREATED:
-            return "Created";
-        case TEAPOT_HTTP_BAD_REQUEST:
-            return "Bad Request";
-        case TEAPOT_HTTP_NOT_FOUND:
-            return "Not Found";
-        case TEAPOT_HTTP_METHOD_NOT_ALLOWED:
-            return "Method Not Allowed";
-        case TEAPOT_HTTP_UNSUPPORTED_MEDIA_TYPE:
-            return "Unsupported Media Type";
-        case TEAPOT_HTTP_INTERNAL_ERROR:
-            return "Internal Server Error";
-        default:
-            return "Unknown";
-        }
-    }
-
-    int tp_sb_appendf(tp_string_builder *sb, const char *fmt, ...)
-    {
-        va_list args;
-
-        va_start(args, fmt);
-        int n = vsnprintf(NULL, 0, fmt, args);
-        va_end(args);
-
-        // NOTE: the new_capacity needs to be +1 because of the null terminator.
-        // However, further below we increase sb->count by n, not n + 1.
-        // This is because we don't want the sb to include the null terminator. The user can always sb_append_null() if they want it
-        tp_da_reserve(sb, sb->count + (size_t)(n + 1));
-        char *dest = sb->items + sb->count;
-        va_start(args, fmt);
-        vsnprintf(dest, (size_t)(n + 1), fmt, args);
-        va_end(args);
-
-        sb->count += (size_t)n;
-
-        return n;
     }
 
     typedef struct
@@ -565,75 +592,6 @@ extern "C"
         return (strcmp(val, expected_value) == 0) ? TP_HEADER_MATCH : TP_HEADER_FOUND;
     }
 
-    static void teapot_init(void)
-    {
-#ifdef _WIN32
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-#endif
-    }
-
-    void teapot_close(stb_teapot_socket_t s)
-    {
-#ifdef _WIN32
-        closesocket(s);
-#else
-        close(s);
-#endif
-    }
-
-    /* One listener per process is the supported model on Windows (WSAStartup in listener_open). */
-    void teapot_listener_close(stb_teapot_socket_t listen_sock)
-    {
-        teapot_close(listen_sock);
-#ifdef _WIN32
-        WSACleanup();
-#endif
-    }
-
-    static int teapot_read(stb_teapot_socket_t s, char *buf, int len)
-    {
-        if (len <= 0)
-        {
-            return 0;
-        }
-
-#ifdef _WIN32
-        return recv(s, buf, len, 0);
-#else
-        return (int)read(s, buf, (size_t)len);
-#endif
-    }
-
-    static int teapot_write(stb_teapot_socket_t s, const char *buf, int len)
-    {
-        if (len <= 0)
-            return 0;
-#ifdef _WIN32
-        return send(s, buf, len, 0);
-#else
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-        return (int)send(s, buf, (size_t)len, MSG_NOSIGNAL);
-#endif
-    }
-
-    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
-    {
-        size_t total = 0;
-        while (total < len)
-        {
-            size_t remaining = len - total;
-            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
-            int n = teapot_write(s, buf + total, chunk);
-            if (n <= 0)
-                return -1;
-            total += (size_t)n;
-        }
-        return 0;
-    }
-
     static const char *tp_skip_spaces(const char *p, const char *end)
     {
         while (p < end && *p == ' ')
@@ -754,6 +712,62 @@ extern "C"
         return 0;
     }
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#include <sys/time.h>
+#endif
+
+    static const char *teapot_status_to_str(int status)
+    {
+        switch (status)
+        {
+        case TEAPOT_HTTP_OK:
+            return "OK";
+        case TEAPOT_HTTP_CREATED:
+            return "Created";
+        case TEAPOT_HTTP_BAD_REQUEST:
+            return "Bad Request";
+        case TEAPOT_HTTP_NOT_FOUND:
+            return "Not Found";
+        case TEAPOT_HTTP_METHOD_NOT_ALLOWED:
+            return "Method Not Allowed";
+        case TEAPOT_HTTP_UNSUPPORTED_MEDIA_TYPE:
+            return "Unsupported Media Type";
+        case TEAPOT_HTTP_INTERNAL_ERROR:
+            return "Internal Server Error";
+        default:
+            return "Unknown";
+        }
+    }
+
+    int tp_sb_appendf(tp_string_builder *sb, const char *fmt, ...)
+    {
+        va_list args;
+
+        va_start(args, fmt);
+        int n = vsnprintf(NULL, 0, fmt, args);
+        va_end(args);
+
+        // NOTE: the new_capacity needs to be +1 because of the null terminator.
+        // However, further below we increase sb->count by n, not n + 1.
+        // This is because we don't want the sb to include the null terminator. The user can always sb_append_null() if they want it
+        tp_da_reserve(sb, sb->count + (size_t)(n + 1));
+        char *dest = sb->items + sb->count;
+        va_start(args, fmt);
+        vsnprintf(dest, (size_t)(n + 1), fmt, args);
+        va_end(args);
+
+        sb->count += (size_t)n;
+
+        return n;
+    }
+
     static int teapot_complete_request_body(stb_teapot_socket_t client, teapot_request *req, size_t content_length)
     {
         if (req->body_length >= content_length)
@@ -803,62 +817,6 @@ extern "C"
             }
         }
         return NULL;
-    }
-
-    int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock)
-    {
-        if (!server || !out_listen_sock)
-            return -1;
-
-        teapot_init();
-
-        stb_teapot_socket_t s = socket(AF_INET, SOCK_STREAM, 0);
-        if (!teapot_socket_ok(s))
-        {
-            perror("socket");
-            return -1;
-        }
-
-        int yes = 1;
-        (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
-
-        struct sockaddr_in addr = {0};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons((uint16_t)server->port);
-        addr.sin_addr.s_addr = INADDR_ANY;
-
-        if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-        {
-            perror("bind");
-            teapot_close(s);
-            return -1;
-        }
-
-        if (listen(s, 8) < 0)
-        {
-            perror("listen");
-            teapot_close(s);
-            return -1;
-        }
-
-        *out_listen_sock = (stb_teapot_socket_t)s;
-        return 0;
-    }
-
-    stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock)
-    {
-        if (!teapot_socket_ok((stb_teapot_socket_t)listen_sock))
-        {
-            return (stb_teapot_socket_t)-1;
-        }
-
-        stb_teapot_socket_t client = accept((stb_teapot_socket_t)listen_sock, NULL, NULL);
-        if (!teapot_socket_ok(client))
-        {
-            return (stb_teapot_socket_t)-1;
-        }
-
-        return (stb_teapot_socket_t)client;
     }
 
     int teapot_recv_request(stb_teapot_socket_t client, char *buffer, int bufsize, int *out_received)
@@ -969,6 +927,71 @@ extern "C"
         return rc;
     }
 
+#include <stdio.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#endif
+
+    int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock)
+    {
+        if (!server || !out_listen_sock)
+            return -1;
+
+        teapot_init();
+
+        stb_teapot_socket_t s = socket(AF_INET, SOCK_STREAM, 0);
+        if (!teapot_socket_ok(s))
+        {
+            perror("socket");
+            return -1;
+        }
+
+        int yes = 1;
+        (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+
+        struct sockaddr_in addr = {0};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons((uint16_t)server->port);
+        addr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+        {
+            perror("bind");
+            teapot_close(s);
+            return -1;
+        }
+
+        if (listen(s, 8) < 0)
+        {
+            perror("listen");
+            teapot_close(s);
+            return -1;
+        }
+
+        *out_listen_sock = (stb_teapot_socket_t)s;
+        return 0;
+    }
+
+    stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock)
+    {
+        if (!teapot_socket_ok((stb_teapot_socket_t)listen_sock))
+        {
+            return (stb_teapot_socket_t)-1;
+        }
+
+        stb_teapot_socket_t client = accept((stb_teapot_socket_t)listen_sock, NULL, NULL);
+        if (!teapot_socket_ok(client))
+        {
+            return (stb_teapot_socket_t)-1;
+        }
+
+        return (stb_teapot_socket_t)client;
+    }
+
     int teapot_listen(teapot_server *server)
     {
         if (!server)
@@ -990,7 +1013,6 @@ extern "C"
 
         return 0;
     }
-
 #endif // STB_TEAPOT_IMPLEMENTATION
 
 #ifdef __cplusplus
