@@ -99,7 +99,11 @@ const char *tests_and_examples[] = {
     TEST_DIR "unit_test_timeout.c",
     TEST_DIR "unit_test_listen.c",
     TEST_DIR "unit_test_run.c",
+    TEST_DIR "unit_test_run_epoll.c",
     EXAMPLE_DIR "basic_server.c",
+#ifndef _WIN32
+    EXAMPLE_DIR "epoll_server.c",
+#endif
     EXAMPLE_DIR "threaded_server.c",
     EXAMPLE_DIR "thread_pool_server_crossplat.c",
 };
@@ -111,6 +115,7 @@ static const char *unit_tests[] = {
     BUILD_DIR "unit_test_timeout",
     BUILD_DIR "unit_test_listen",
     BUILD_DIR "unit_test_run",
+    BUILD_DIR "unit_test_run_epoll",
 };
 
 static int compile_all_exe(const char **exes, size_t test_count)
@@ -210,6 +215,7 @@ static const char *amalgam_c_files[] = {
     "src/tp_conn.c",
     "src/tp_listen.c",
     "src/tp_wait_poll.c",
+    "src/tp_wait_epoll.c",
     "src/tp_run.c",
 };
 

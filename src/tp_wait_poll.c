@@ -3,7 +3,6 @@
 #if TEAPOT_WAIT == TEAPOT_WAIT_POLL
 #ifndef _WIN32
 
-#include <errno.h>
 #include <poll.h>
 
 #define TEAPOT_WAIT_IN 1
@@ -56,8 +55,7 @@ int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
         w->cap = cap;
     }
     w->pfds[w->count] = (struct pollfd){.fd = fd, .events = TP_PE(events)};
-    w->udata[w->count] = udata;
-    w->count++;
+    w->udata[w->count++] = udata;
     return 0;
 }
 

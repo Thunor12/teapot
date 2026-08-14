@@ -25,7 +25,7 @@ jobs:
         run: |
           cc -o nob nob.c && ./nob amalgamate
           git diff --exit-code stb_teapot.h
-          test "$(wc -l < stb_teapot.h)" -lt 1800
+          test "$(wc -l < stb_teapot.h)" -lt 2200
           for f in src/*.c src/*.h; do test "$(wc -l < "$f")" -lt 400; done
 
   fuzz:
