@@ -145,17 +145,17 @@ static teapot_response docs_embed_handler(const teapot_request *req)
     }
     path[n] = '\0';
 
+    /* Bare /api and /wait break same-dir relative hrefs; send browsers to trailing slash. */
+    if (strcmp(path, "/api") == 0 || strcmp(path, "/wait") == 0)
+    {
+        teapot_response r = teapot_text(302, "");
+        (void)teapot_response_headerf(&r, "Location", "%s/", path);
+        return r;
+    }
+
     if (strcmp(path, "/") == 0)
     {
         f = tp_embed_find("/index.html");
-    }
-    else if (strcmp(path, "/api") == 0)
-    {
-        f = tp_embed_find("/api/index.html");
-    }
-    else if (strcmp(path, "/wait") == 0)
-    {
-        f = tp_embed_find("/wait/index.html");
     }
     else
     {
