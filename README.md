@@ -34,6 +34,20 @@ int main(void)
 
 Also `teapot_text` and `teapot_bytes`. Full example: `examples/basic_server.c`.
 
+## Interactive docs
+
+Offline HTML docs (dark by default; theme toggle for light) ship as wait-specific binaries. Edit `examples/docs/`, run `./nob` (regenerates `build/docs_embed.h` when stale), then start one binary:
+
+```sh
+./build/teapot_docs_poll          # POSIX poll (Linux and other Unix)
+./build/teapot_docs_epoll         # Linux only
+# ./build/teapot_docs_kqueue      # macOS / BSD
+# ./build/teapot_docs_wsapoll.exe # Windows
+# ./build/teapot_docs_wfmo.exe    # Windows (64-socket cap)
+```
+
+Open `http://127.0.0.1:8080/` (override with `TEAPOT_DEMO_PORT`, integer **1..65535**). Assets and **htmx 2.0.4** are embedded — no CDN. `./nob` builds OS-gated `teapot_docs_*` binaries but does **not** run them in the unit-test loop (they are blocking servers).
+
 ## `teapot_listen` vs `teapot_run`
 
 | | `teapot_listen` | `teapot_run` |
@@ -82,7 +96,7 @@ clang -O1 -g -std=c17 -fsanitize=fuzzer,address,undefined \
 ./build/fuzz_serve build/fuzz_corpus -max_total_time=30 -timeout=2
 ```
 
-Do not run `build/basic_server` (or the other example servers) from `./nob` — they are blocking listeners. Use `timeout` if you start one by hand.
+Do not run `build/basic_server` or `build/teapot_docs_*` from `./nob` — they are blocking listeners. Use `timeout` or start a docs binary by hand, then stop with Ctrl+C.
 
 ## Socket ownership
 

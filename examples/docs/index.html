@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>teapot — interactive docs</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <script>
+    /* Early theme boot: allowlist dark|light; setAttribute/dataset only. */
+    (function () {
+      try {
+        var t = localStorage.getItem("teapot-docs-theme");
+        if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <!-- Landing chrome: theme toggle only. Hero owns CTAs. -->
+  <header class="chrome chrome-landing">
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to light theme">Light</button>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <h1 class="hero-wordmark">teapot</h1>
+      <p class="hero-lead">
+        Single-header C HTTP/1.1 server docs for this binary’s wait backend
+        (<strong id="wait-backend-name"
+                 hx-get="/frag/wait-name"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">this wait</strong>).
+        Common API and wait multiplexing, offline, with vendored htmx.
+      </p>
+      <div class="cta-row">
+        <a class="cta cta-primary" href="api/index.html">API</a>
+        <a class="cta cta-secondary" href="wait/index.html">Wait</a>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/theme.js"></script>
+  <script src="vendor/htmx.min.js"></script>
+</body>
+</html>

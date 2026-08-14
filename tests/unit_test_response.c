@@ -122,6 +122,183 @@ static void test_teapot_bytes_crlf_ctype_rejected_on_send(void)
     teapot_close(sp[1]);
 }
 
+static int send_and_read(teapot_response *r, char *buf, size_t cap)
+{
+    stb_teapot_socket_t sp[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sp) != 0)
+        return -1;
+    int rc = teapot_send_response(sp[0], r);
+    shutdown(sp[0], SHUT_WR);
+    if (rc == 0)
+        (void)read_all(sp[1], buf, cap);
+    else
+        buf[0] = '\0';
+    teapot_close(sp[0]);
+    teapot_close(sp[1]);
+    return rc;
+}
+
+static void test_header_rejects_empty_name_and_crlf(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+    ok("reject empty name", teapot_response_header(&r, "", "v") == -1);
+    ok("reject CR in name", teapot_response_header(&r, "X-\rName", "v") == -1);
+    ok("reject LF in name", teapot_response_header(&r, "X-\nName", "v") == -1);
+    ok("reject CR in value", teapot_response_header(&r, "X-Ok", "a\rb") == -1);
+    ok("reject LF in value", teapot_response_header(&r, "X-Ok", "a\nb") == -1);
+    teapot_response_free(&r);
+}
+
+static void test_header_rejects_colon_space_ctl_in_name(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+    ok("reject colon in name", teapot_response_header(&r, "X:Bad", "v") == -1);
+    ok("reject space in name", teapot_response_header(&r, "X Bad", "v") == -1);
+    ok("reject CTL in name", teapot_response_header(&r, "X-" "\x01" "Bad", "v") == -1);
+    ok("reject DEL in name", teapot_response_header(&r, "X-" "\x7F" "Bad", "v") == -1);
+    ok("reject CTL in value", teapot_response_header(&r, "X-Ok", "a" "\x01" "b") == -1);
+    ok("reject DEL in value", teapot_response_header(&r, "X-Ok", "a" "\x7F" "b") == -1);
+    ok("allow HTAB in value", teapot_response_header(&r, "X-Tab", "a\tb") == 0);
+    teapot_response_free(&r);
+}
+
+static void test_header_rejects_oversize(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+
+    char name[TP_MAX_HEADER_NAME_LEN + 2];
+    memset(name, 'N', sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+    ok("reject oversize name", teapot_response_header(&r, name, "v") == -1);
+
+    char value[TP_MAX_HEADER_VALUE_LEN + 2];
+    memset(value, 'V', sizeof(value) - 1);
+    value[sizeof(value) - 1] = '\0';
+    ok("reject oversize value", teapot_response_header(&r, "X-Ok", value) == -1);
+    teapot_response_free(&r);
+}
+
+static void test_header_empty_value_on_wire(void)
+{
+    teapot_response r = teapot_text(TEAPOT_HTTP_OK, "OK");
+    ok("empty value accepted", teapot_response_header(&r, "X-Empty", "") == 0);
+
+    char received[1024];
+    ok("send empty value", send_and_read(&r, received, sizeof(received)) == 0);
+    ok("empty value present on wire", strstr(received, "X-Empty: \r\n") != NULL || strstr(received, "X-Empty:\r\n") != NULL);
+    teapot_response_free(&r);
+}
+
+static void test_header_reserved_and_format_skip(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+    r.content_type = "text/plain";
+    teapot_response_write(&r, "OK", 2);
+
+    ok("reject Content-Type", teapot_response_header(&r, "Content-Type", "text/html") == -1);
+    ok("reject content-length", teapot_response_header(&r, "content-length", "999") == -1);
+    ok("reject CONNECTION", teapot_response_header(&r, "CONNECTION", "keep-alive") == -1);
+    ok("reject Transfer-Encoding", teapot_response_header(&r, "Transfer-Encoding", "chunked") == -1);
+
+    /* Force reserved into headers; format must omit. */
+    tp_header_line forced = {0};
+    tp_sb_append_cstr(&forced.name, "Content-Length");
+    tp_sb_append_null(&forced.name);
+    tp_sb_append_cstr(&forced.value, "999");
+    tp_sb_append_null(&forced.value);
+    tp_da_append(&r.headers, forced);
+
+    char received[1024];
+    ok("send with forced reserved", send_and_read(&r, received, sizeof(received)) == 0);
+    ok("format keeps real content-length 2", strstr(received, "Content-Length: 2\r\n") != NULL);
+    ok("format omits forced reserved 999", strstr(received, "Content-Length: 999") == NULL);
+    teapot_response_free(&r);
+}
+
+static void test_two_set_cookie_append_order(void)
+{
+    teapot_response r = teapot_text(TEAPOT_HTTP_OK, "OK");
+    ok("set-cookie a", teapot_response_header(&r, "Set-Cookie", "a=1") == 0);
+    ok("set-cookie b", teapot_response_header(&r, "Set-Cookie", "b=2") == 0);
+
+    char received[1024];
+    ok("send cookies", send_and_read(&r, received, sizeof(received)) == 0);
+    const char *a = strstr(received, "Set-Cookie: a=1\r\n");
+    const char *b = strstr(received, "Set-Cookie: b=2\r\n");
+    ok("both set-cookie on wire", a != NULL && b != NULL);
+    ok("set-cookie append order", a != NULL && b != NULL && a < b);
+    teapot_response_free(&r);
+}
+
+static void test_teapot_html(void)
+{
+    teapot_response r = teapot_html(TEAPOT_HTTP_OK, "<p>hi</p>");
+    ok("html ctype", r.content_type && strcmp(r.content_type, "text/html; charset=utf-8") == 0);
+    ok("html body", r.body.count == 9 && memcmp(r.body.items, "<p>hi</p>", 9) == 0);
+    ok("html headers zeroed", r.headers.count == 0 && r.headers.items == NULL);
+    teapot_response_free(&r);
+
+    teapot_response empty = teapot_html(TEAPOT_HTTP_OK, NULL);
+    ok("html NULL empty body", empty.body.count == 0 && empty.body.items == NULL);
+    teapot_response_free(&empty);
+}
+
+static void test_empty_headers_byte_identical_to_text_ok(void)
+{
+    const char expected[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/plain\r\n"
+        "Content-Length: 2\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "OK";
+
+    teapot_response r = teapot_text(TEAPOT_HTTP_OK, "OK");
+    char received[1024];
+    ok("send text OK", send_and_read(&r, received, sizeof(received)) == 0);
+    ok("byte-identical empty headers wire",
+       strlen(received) == sizeof(expected) - 1 && memcmp(received, expected, sizeof(expected) - 1) == 0);
+    teapot_response_free(&r);
+}
+
+static void test_headerf_success_on_wire(void)
+{
+    teapot_response r = teapot_text(TEAPOT_HTTP_OK, "OK");
+    ok("headerf HX-Trigger", teapot_response_headerf(&r, "HX-Trigger", "flash-%s", "ok") == 0);
+
+    char received[1024];
+    ok("send headerf", send_and_read(&r, received, sizeof(received)) == 0);
+    ok("headerf value on wire", strstr(received, "HX-Trigger: flash-ok\r\n") != NULL);
+    teapot_response_free(&r);
+}
+
+static void test_headerf_rejects_oversize_format(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+
+    char big[TP_MAX_HEADER_VALUE_LEN + 8];
+    memset(big, 'V', sizeof(big) - 1);
+    big[sizeof(big) - 1] = '\0';
+    ok("headerf reject oversize format", teapot_response_headerf(&r, "X-Ok", "%s", big) == -1);
+    ok("headerf oversize left empty", r.headers.count == 0);
+    teapot_response_free(&r);
+}
+
+static void test_headerf_rejects_reserved(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+    ok("headerf reject Content-Length", teapot_response_headerf(&r, "Content-Length", "%d", 999) == -1);
+    ok("headerf reject connection", teapot_response_headerf(&r, "connection", "%s", "keep-alive") == -1);
+    ok("headerf reserved left empty", r.headers.count == 0);
+    teapot_response_free(&r);
+}
+
 int main(void)
 {
     printf("Running response unit tests...\n\n");
@@ -130,6 +307,17 @@ int main(void)
     test_teapot_json_sets_ctype_and_body();
     test_teapot_text_sets_ctype_and_body();
     test_teapot_bytes_crlf_ctype_rejected_on_send();
+    test_header_rejects_empty_name_and_crlf();
+    test_header_rejects_colon_space_ctl_in_name();
+    test_header_rejects_oversize();
+    test_header_empty_value_on_wire();
+    test_header_reserved_and_format_skip();
+    test_two_set_cookie_append_order();
+    test_teapot_html();
+    test_empty_headers_byte_identical_to_text_ok();
+    test_headerf_success_on_wire();
+    test_headerf_rejects_oversize_format();
+    test_headerf_rejects_reserved();
     if (failures == 0)
     {
         printf("\nALL TESTS PASSED\n");

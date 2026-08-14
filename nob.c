@@ -11,6 +11,11 @@
 #define TEST_DIR "./tests/"
 #define EXAMPLE_DIR "./examples/"
 
+#define DOCS_EMBED_SRC EXAMPLE_DIR "docs"
+#define DOCS_EMBED_OUT BUILD_DIR "docs_embed.h"
+#define TEST_EMBED_SRC TEST_DIR "fixtures/embed_docs"
+#define TEST_EMBED_OUT BUILD_DIR "test_embed.h"
+
 #define COMPILE_FLAGS "-O2", "-g",                                                                           \
                       "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wconversion", "-Wimplicit-fallthrough", \
                       "-Wshadow", "-Wpointer-arith", "-Wcast-qual", "-Wstrict-prototypes",                   \
@@ -42,7 +47,8 @@ static void strip_c_suffix(char *name)
 static int compile_exe(
     const char **source_files, size_t src_count, //
     const char **deps, size_t deps_count,        //
-    const char *output_file                      //
+    const char *output_file,                     //
+    int with_build_include                       //
 )
 {
     int ret = 0;
@@ -57,6 +63,8 @@ static int compile_exe(
 
     nob_cc_flags(&cmd);
     nob_cmd_append(&cmd, COMPILE_FLAGS);
+    if (with_build_include)
+        nob_cmd_append(&cmd, "-I", "build");
 
     nob_cc_output(&cmd, output_file);
 
@@ -103,6 +111,7 @@ const char *tests_and_examples[] = {
 #ifdef __linux__
     TEST_DIR "unit_test_run_epoll.c",
 #endif
+    TEST_DIR "unit_test_embed.c",
     EXAMPLE_DIR "basic_server.c",
 #ifdef __linux__
     EXAMPLE_DIR "epoll_server.c",
@@ -122,6 +131,7 @@ static const char *unit_tests[] = {
 #ifdef __linux__
     BUILD_DIR "unit_test_run_epoll",
 #endif
+    BUILD_DIR "unit_test_embed",
 };
 
 static int compile_all_exe(const char **exes, size_t test_count)
@@ -147,11 +157,18 @@ static int compile_all_exe(const char **exes, size_t test_count)
 #endif
         nob_sb_append_null(&sb);
 
-        const char **deps = (const char *[]){
+        const char *deps_default[] = {
             "stb_teapot.h",
         };
+        const char *deps_embed[] = {
+            "stb_teapot.h",
+            TEST_EMBED_OUT,
+        };
+        int is_embed = 0 == strcmp(temp, "unit_test_embed");
+        const char **deps = is_embed ? deps_embed : deps_default;
+        size_t deps_count = is_embed ? NOB_ARRAY_LEN(deps_embed) : NOB_ARRAY_LEN(deps_default);
 
-        if (0 != compile_exe(&exe_source, 1, deps, NOB_ARRAY_LEN(deps), sb.items))
+        if (0 != compile_exe(&exe_source, 1, deps, deps_count, sb.items, 0))
         {
             ret = 1;
             goto defer;
@@ -163,6 +180,65 @@ defer:
     {
         ret = 1;
     }
+    nob_sb_free(sb);
+    return ret;
+}
+
+/* OS-gated interactive docs binaries. Compiled but never run from ./nob. */
+static const char *docs_examples[] = {
+#ifdef __linux__
+    EXAMPLE_DIR "teapot_docs_epoll.c",
+#endif
+#if !defined(_WIN32)
+    EXAMPLE_DIR "teapot_docs_poll.c",
+#endif
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+    defined(__DragonFly__)
+    EXAMPLE_DIR "teapot_docs_kqueue.c",
+#endif
+#ifdef _WIN32
+    EXAMPLE_DIR "teapot_docs_wsapoll.c",
+    EXAMPLE_DIR "teapot_docs_wfmo.c",
+#endif
+};
+
+static int compile_docs_examples(void)
+{
+    int ret = 0;
+    Nob_String_Builder sb = {0};
+    const char *deps[] = {
+        "stb_teapot.h",
+        DOCS_EMBED_OUT,
+        EXAMPLE_DIR "docs_app.h",
+    };
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(docs_examples); i++)
+    {
+        char temp[260] = {0};
+        memset(sb.items, 0, sb.count);
+        sb.count = 0;
+
+        const char *exe_source = docs_examples[i];
+        const char *exe_name = nob_path_name(exe_source);
+        sprintf(temp, "%s", exe_name);
+        strip_c_suffix(temp);
+
+        nob_sb_appendf(&sb, BUILD_DIR "%s", temp);
+#ifdef _WIN32
+        nob_sb_append_cstr(&sb, ".exe");
+#endif
+        nob_sb_append_null(&sb);
+
+        if (0 != compile_exe(&exe_source, 1, deps, NOB_ARRAY_LEN(deps), sb.items, 1))
+        {
+            ret = 1;
+            goto defer;
+        }
+    }
+
+defer:
+    if (!nob_procs_flush(&procs))
+        ret = 1;
     nob_sb_free(sb);
     return ret;
 }
@@ -345,6 +421,9 @@ defer:
     return ret;
 }
 
+#include "nob_embed.c"
+
+
 static int run_fuzz(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -436,7 +515,7 @@ static int run_unit_tests(void)
 int main(int argc, char **argv)
 {
     int ret = 0;
-    NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "third_party/nob/nob.h");
+    NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "third_party/nob/nob.h", "nob_embed.c");
 
     if (!nob_mkdir_if_not_exists(BUILD_DIR))
     {
@@ -449,6 +528,12 @@ int main(int argc, char **argv)
     if (argc > 0 && 0 == strcmp(argv[0], "amalgamate"))
     {
         ret = amalgamate();
+        goto defer;
+    }
+
+    if (argc > 0 && 0 == strcmp(argv[0], "embed"))
+    {
+        ret = embed_generate(DOCS_EMBED_SRC, DOCS_EMBED_OUT);
         goto defer;
     }
 
@@ -483,7 +568,29 @@ int main(int argc, char **argv)
         goto defer;
     }
 
+    if (0 != embed_if_stale(DOCS_EMBED_SRC, DOCS_EMBED_OUT))
+    {
+        ret = 1;
+        goto defer;
+    }
+    if (0 != embed_if_stale(TEST_EMBED_SRC, TEST_EMBED_OUT))
+    {
+        ret = 1;
+        goto defer;
+    }
+    if (0 != embed_selfcheck_negative())
+    {
+        ret = 1;
+        goto defer;
+    }
+
     if (0 != compile_all_exe(tests_and_examples, NOB_ARRAY_LEN(tests_and_examples)))
+    {
+        ret = 1;
+        goto defer;
+    }
+
+    if (0 != compile_docs_examples())
     {
         ret = 1;
         goto defer;

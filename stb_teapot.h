@@ -264,14 +264,33 @@ extern "C"
     typedef struct
     {
         int status;
-        const char *content_type; /* NULL => "text/plain" */
+        const char *content_type; /* borrowed; NULL => "text/plain"; must outlive send */
+        tp_headers headers;       /* owned extra headers */
         tp_string_builder body;
     } teapot_response;
+
+    static inline void tp_headers_free(tp_headers *h)
+    {
+        if (h == NULL)
+            return;
+        for (size_t i = 0; i < h->count; ++i)
+        {
+            tp_sb_free(h->items[i].name);
+            tp_sb_free(h->items[i].value);
+        }
+        TP_FREE(h->items);
+        h->items = NULL;
+        h->count = 0;
+        h->capacity = 0;
+    }
 
     static inline void teapot_response_init(teapot_response *res, int status)
     {
         res->status = status;
         res->content_type = NULL;
+        res->headers.items = NULL;
+        res->headers.count = 0;
+        res->headers.capacity = 0;
         res->body.items = NULL;
         res->body.count = 0;
         res->body.capacity = 0;
@@ -289,25 +308,18 @@ extern "C"
 
     static inline void teapot_response_free(teapot_response *res)
     {
+        if (res == NULL)
+            return;
+        tp_headers_free(&res->headers);
         tp_sb_free(res->body);
+        res->status = 0;
+        res->content_type = NULL;
+        res->headers.items = NULL;
+        res->headers.count = 0;
+        res->headers.capacity = 0;
         res->body.items = NULL;
         res->body.count = 0;
         res->body.capacity = 0;
-    }
-
-    static inline void tp_headers_free(tp_headers *h)
-    {
-        if (h == NULL)
-            return;
-        for (size_t i = 0; i < h->count; ++i)
-        {
-            tp_sb_free(h->items[i].name);
-            tp_sb_free(h->items[i].value);
-        }
-        TP_FREE(h->items);
-        h->items = NULL;
-        h->count = 0;
-        h->capacity = 0;
     }
 
     /* Find a header value (case-insensitive). Returns pointer to the value string-builder, or NULL if not found */
@@ -356,6 +368,9 @@ extern "C"
     teapot_response teapot_text(int status, const char *s);
     teapot_response teapot_json(int status, const char *json);
     teapot_response teapot_bytes(int status, const char *ctype, const void *p, size_t n);
+    teapot_response teapot_html(int status, const char *html);
+    int teapot_response_header(teapot_response *r, const char *name, const char *value);
+    int teapot_response_headerf(teapot_response *r, const char *name, const char *fmt, ...);
     /* parse, complete body, route, send. Does NOT close client. */
     int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client);
     /* teapot_serve_client + teapot_close. Takes ownership of client. */
@@ -895,6 +910,91 @@ extern "C"
         return n;
     }
 
+    static int teapot_header_name_is_reserved(const char *name)
+    {
+        static const char *const reserved[] = {
+            "Content-Type",
+            "Content-Length",
+            "Connection",
+            "Transfer-Encoding",
+        };
+        if (!name)
+            return 0;
+        for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i)
+        {
+            const char *a = name;
+            const char *b = reserved[i];
+            while (*a && *b)
+            {
+                unsigned char ca = (unsigned char)*a;
+                unsigned char cb = (unsigned char)*b;
+                if (ca >= 'A' && ca <= 'Z')
+                    ca = (unsigned char)(ca - 'A' + 'a');
+                if (cb >= 'A' && cb <= 'Z')
+                    cb = (unsigned char)(cb - 'A' + 'a');
+                if (ca != cb)
+                    break;
+                ++a;
+                ++b;
+            }
+            if (*a == '\0' && *b == '\0')
+                return 1;
+        }
+        return 0;
+    }
+
+    static int teapot_response_header_name_ok(const char *name)
+    {
+        if (!name)
+            return 0;
+        size_t n = 0;
+        for (const unsigned char *p = (const unsigned char *)name; *p; ++p, ++n)
+        {
+            if (*p <= 0x20 || *p == 0x7F || *p == ':')
+                return 0;
+        }
+        return n > 0 && n <= (size_t)TP_MAX_HEADER_NAME_LEN;
+    }
+
+    static int teapot_response_header_value_ok(const char *value)
+    {
+        if (!value)
+            value = "";
+        size_t n = 0;
+        for (const unsigned char *p = (const unsigned char *)value; *p; ++p, ++n)
+        {
+            if (*p == 0x7F)
+                return 0;
+            if (*p < 0x20 && *p != 0x09)
+                return 0;
+        }
+        return n <= (size_t)TP_MAX_HEADER_VALUE_LEN;
+    }
+
+    /* Copy + NUL + size caps. Caller validates token/CTL/reserved. */
+    static int tp_headers_append_owned(tp_headers *h, const char *name, const char *value)
+    {
+        if (!h || !name)
+            return -1;
+        if (!value)
+            value = "";
+        size_t nlen = strlen(name);
+        size_t vlen = strlen(value);
+        if (nlen == 0 || nlen > (size_t)TP_MAX_HEADER_NAME_LEN || vlen > (size_t)TP_MAX_HEADER_VALUE_LEN)
+            return -1;
+
+        tp_header_line line = {0};
+        tp_sb_append_buf(&line.name, name, nlen);
+        tp_sb_append_null(&line.name);
+        if (vlen > 0)
+        {
+            tp_sb_append_buf(&line.value, value, vlen);
+            tp_sb_append_null(&line.value);
+        }
+        tp_da_append(h, line);
+        return 0;
+    }
+
     static int teapot_format_response(tp_string_builder *out, const teapot_response *resp)
     {
         if (!out || !resp)
@@ -905,11 +1005,46 @@ extern "C"
             return -1;
 
         tp_sb_appendf(out,
-                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n\r\n",
+                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n",
                       resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+
+        for (size_t i = 0; i < resp->headers.count; ++i)
+        {
+            const tp_header_line *hl = &resp->headers.items[i];
+            const char *hn = hl->name.items ? hl->name.items : "";
+            if (teapot_header_name_is_reserved(hn))
+                continue;
+            const char *hv = hl->value.items ? hl->value.items : "";
+            tp_sb_appendf(out, "%s: %s\r\n", hn, hv);
+        }
+
+        tp_sb_append_cstr(out, "\r\n");
         if (resp->body.count > 0)
             tp_sb_append_buf(out, resp->body.items, resp->body.count);
         return 0;
+    }
+
+    int teapot_response_header(teapot_response *r, const char *name, const char *value)
+    {
+        if (!r || !teapot_response_header_name_ok(name) || !teapot_response_header_value_ok(value))
+            return -1;
+        if (teapot_header_name_is_reserved(name))
+            return -1;
+        return tp_headers_append_owned(&r->headers, name, value);
+    }
+
+    int teapot_response_headerf(teapot_response *r, const char *name, const char *fmt, ...)
+    {
+        if (!r || !fmt)
+            return -1;
+        char buf[TP_MAX_HEADER_VALUE_LEN + 1];
+        va_list ap;
+        va_start(ap, fmt);
+        int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        if (n < 0 || (size_t)n >= sizeof(buf))
+            return -1;
+        return teapot_response_header(r, name, buf);
     }
 
     teapot_response teapot_text(int status, const char *s)
@@ -939,6 +1074,16 @@ extern "C"
         r.content_type = ctype ? ctype : "text/plain";
         if (p && n > 0)
             teapot_response_write(&r, p, n);
+        return r;
+    }
+
+    teapot_response teapot_html(int status, const char *html)
+    {
+        teapot_response r;
+        teapot_response_init(&r, status);
+        r.content_type = "text/html; charset=utf-8";
+        if (html)
+            teapot_response_write(&r, html, strlen(html));
         return r;
     }
 
@@ -1114,14 +1259,10 @@ extern "C"
         c->req.user = c->server->user;
         teapot_handler handler = teapot_find_handler(c->server, &c->req);
         teapot_response_free(&c->res);
-        teapot_response_init(&c->res, TEAPOT_HTTP_OK);
         if (handler)
             c->res = handler(&c->req);
         else
-        {
-            c->res.status = TEAPOT_HTTP_NOT_FOUND;
-            tp_sb_appendf(&c->res.body, "404 Not Found\n");
-        }
+            c->res = teapot_text(TEAPOT_HTTP_NOT_FOUND, "404 Not Found\n");
 
         tp_sb_free(c->out);
         c->out = (tp_string_builder){0};

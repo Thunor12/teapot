@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wait backends — teapot</title>
+  <link rel="stylesheet" href="../css/theme.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("teapot-docs-theme");
+        if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="chrome">
+    <a class="chrome-brand" href="../index.html">teapot</a>
+    <nav class="chrome-nav" aria-label="Primary">
+      <a href="../api/index.html">API</a>
+      <a href="index.html" aria-current="page">Wait</a>
+    </nav>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to light theme">Light</button>
+  </header>
+
+  <main class="page page-wide">
+    <h1>Wait backends</h1>
+    <p class="lede">
+      <code>teapot_run</code> multiplexes connections with a compile-time wait backend.
+      This page is the same HTML shell in every docs binary; live meta comes from a fragment.
+    </p>
+
+    <div id="wait-meta" class="callout frag-target"
+         hx-get="/frag/wait-meta"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <p class="muted">Loading this binary’s wait backend…</p>
+    </div>
+
+    <section class="section">
+      <h2>Complete <code>teapot_run</code> main</h2>
+      <p>Define one <code>TEAPOT_USE_*</code> macro before the header. Swap the macro for your platform.</p>
+<pre><code>#define TEAPOT_USE_POLL
+#define STB_TEAPOT_IMPLEMENTATION
+#include "stb_teapot.h"
+
+#include &lt;signal.h&gt;
+#include &lt;stdio.h&gt;
+
+static teapot_server *g_srv;
+
+static teapot_response ping(const teapot_request *req)
+{
+    (void)req;
+    return teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
+}
+
+static void on_sigint(int sig)
+{
+    (void)sig;
+    if (g_srv)
+        teapot_request_stop(g_srv);
+}
+
+int main(void)
+{
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/ping", ping},
+    };
+    teapot_server server = {
+        .port = 8080,
+        .routes = routes,
+        .route_count = 1,
+        .bind_host = "127.0.0.1",
+    };
+    g_srv = &amp;server;
+    (void)signal(SIGINT, on_sigint);
+    printf("teapot_run on http://127.0.0.1:8080/ping\n");
+    return teapot_run(&amp;server);
+}</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Comparison</h2>
+      <p class="muted">Shown in every binary. Prefer WSAPoll over WFMO when you need more than 64 sockets on Windows.</p>
+      <table class="compare">
+        <thead>
+          <tr>
+            <th>Macro</th>
+            <th>Backend</th>
+            <th>Default on</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>TEAPOT_USE_EPOLL</code></td>
+            <td>Linux epoll</td>
+            <td>Linux</td>
+          </tr>
+          <tr>
+            <td><code>TEAPOT_USE_POLL</code></td>
+            <td>POSIX <code>poll</code></td>
+            <td>other Unix</td>
+          </tr>
+          <tr>
+            <td><code>TEAPOT_USE_KQUEUE</code></td>
+            <td>kqueue</td>
+            <td>macOS / BSD</td>
+          </tr>
+          <tr>
+            <td><code>TEAPOT_USE_WSAPOLL</code></td>
+            <td><code>WSAPoll</code></td>
+            <td>Windows</td>
+          </tr>
+          <tr>
+            <td><code>TEAPOT_USE_WFMO</code></td>
+            <td><code>WSAEventSelect</code> + <code>WSAWaitForMultipleEvents</code></td>
+            <td>(opt-in)</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        <p><strong>WFMO cap:</strong> at most <strong>64</strong> sockets at once (listen plus clients). Past that, teapot stops accepting until a connection finishes. Prefer <code>TEAPOT_USE_WSAPOLL</code> for higher concurrency on Windows.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Live ping</h2>
+      <p class="muted">Fragment swap into <code>#frag-ping</code>. Optional delayed trigger is client-side only.</p>
+      <div class="frag-toy">
+        <div class="frag-actions">
+          <button type="button"
+                  hx-get="/frag/ping"
+                  hx-target="#frag-ping"
+                  hx-swap="innerHTML">
+            Ping now
+          </button>
+          <button type="button"
+                  hx-get="/frag/ping"
+                  hx-target="#frag-ping"
+                  hx-swap="innerHTML"
+                  hx-trigger="click delay:800ms">
+            Ping after 800ms
+          </button>
+        </div>
+        <div id="frag-ping" class="frag-target" aria-live="polite">Ping result lands here.</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../js/theme.js"></script>
+  <script src="../vendor/htmx.min.js"></script>
+</body>
+</html>

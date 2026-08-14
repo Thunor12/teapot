@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Routes — teapot API</title>
+  <link rel="stylesheet" href="../css/theme.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("teapot-docs-theme");
+        if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="chrome">
+    <a class="chrome-brand" href="../index.html">teapot</a>
+    <nav class="chrome-nav" aria-label="Primary">
+      <a href="index.html" aria-current="page">API</a>
+      <a href="../wait/index.html">Wait</a>
+    </nav>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to light theme">Light</button>
+  </header>
+
+  <main class="page">
+    <h1>Routes</h1>
+    <p class="lede">Exact path match against a static <code>teapot_route</code> table. Method + path + handler.</p>
+
+    <nav class="subnav" aria-label="API sections">
+      <a href="index.html">Overview</a>
+      <a href="routes.html" aria-current="page">Routes</a>
+      <a href="responses.html">Responses</a>
+      <a href="limits.html">Limits</a>
+    </nav>
+
+    <section class="section">
+      <h2>Table shape</h2>
+      <p>Each route is method, path string, and handler returning <code>teapot_response</code> by value.</p>
+<pre><code>teapot_route routes[] = {
+    {TEAPOT_GET,  "/ping",  ping},
+    {TEAPOT_GET,  "/hello", hello},
+    {TEAPOT_POST, "/echo",  echo},
+};</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Matching</h2>
+      <ul class="plain">
+        <li>Exact path after stripping the query string (<code>?</code> and beyond).</li>
+        <li>No path parameters and no globbing in this release.</li>
+        <li>Unknown route → 404.</li>
+        <li>Handler is <code>teapot_response (*)(const teapot_request *)</code>.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Request view</h2>
+      <p>Handlers read method, path, headers, and optional body via <code>teapot_request</code>. Do not free the request; the library owns connection lifetime.</p>
+    </section>
+  </main>
+
+  <script src="../js/theme.js"></script>
+  <script src="../vendor/htmx.min.js"></script>
+</body>
+</html>
