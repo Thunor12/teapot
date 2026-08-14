@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API — teapot</title>
+  <link rel="stylesheet" href="../css/theme.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("teapot-docs-theme");
+        if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="chrome">
+    <a class="chrome-brand" href="../index.html">teapot</a>
+    <nav class="chrome-nav" aria-label="Primary">
+      <a href="index.html" aria-current="page">API</a>
+      <a href="../wait/index.html">Wait</a>
+    </nav>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to light theme">Light</button>
+  </header>
+
+  <main class="page">
+    <h1>API</h1>
+    <p class="lede">Route a request, return JSON, text, bytes, or HTML. Choose <code>teapot_listen</code> or <code>teapot_run</code>.</p>
+
+    <nav class="subnav" aria-label="API sections">
+      <a href="index.html" aria-current="page">Overview</a>
+      <a href="routes.html">Routes</a>
+      <a href="responses.html">Responses</a>
+      <a href="limits.html">Limits</a>
+    </nav>
+
+    <section class="section">
+      <h2>listen vs run</h2>
+      <table class="compare">
+        <thead>
+          <tr>
+            <th></th>
+            <th><code>teapot_listen</code></th>
+            <th><code>teapot_run</code></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Concurrency</td>
+            <td>One client at a time</td>
+            <td>Many clients on one thread</td>
+          </tr>
+          <tr>
+            <td>Typical use</td>
+            <td>Small tools, demos</td>
+            <td>Services that must overlap I/O</td>
+          </tr>
+          <tr>
+            <td>Example</td>
+            <td><code>examples/basic_server.c</code></td>
+            <td><code>examples/epoll_server.c</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted">Both bind, accept, and dispatch the same <code>teapot_route</code> table. Stop with <code>teapot_request_stop</code>.</p>
+    </section>
+
+    <section class="section">
+      <h2>Complete <code>teapot_listen</code> ping</h2>
+      <p>Copyable main: <code>GET /ping</code> returns JSON on loopback.</p>
+<pre><code>#define STB_TEAPOT_IMPLEMENTATION
+#include "stb_teapot.h"
+
+static teapot_response ping(const teapot_request *req)
+{
+    (void)req;
+    return teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
+}
+
+int main(void)
+{
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/ping", ping},
+    };
+    teapot_server server = {
+        .port = 8080,
+        .routes = routes,
+        .route_count = 1,
+        .bind_host = "127.0.0.1",
+    };
+    return teapot_listen(&amp;server);
+}</code></pre>
+      <p class="muted"><code>curl http://127.0.0.1:8080/ping</code> → <code>{"ok":true}</code>.</p>
+    </section>
+  </main>
+
+  <script src="../js/theme.js"></script>
+  <script src="../vendor/htmx.min.js"></script>
+</body>
+</html>

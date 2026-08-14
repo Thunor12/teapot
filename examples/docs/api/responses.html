@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Responses — teapot API</title>
+  <link rel="stylesheet" href="../css/theme.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("teapot-docs-theme");
+        if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="chrome">
+    <a class="chrome-brand" href="../index.html">teapot</a>
+    <nav class="chrome-nav" aria-label="Primary">
+      <a href="index.html" aria-current="page">API</a>
+      <a href="../wait/index.html">Wait</a>
+    </nav>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to light theme">Light</button>
+  </header>
+
+  <main class="page">
+    <h1>Responses</h1>
+    <p class="lede">Helpers for body + content type, plus append-only extra headers for <code>HX-*</code>, cookies, and friends.</p>
+
+    <nav class="subnav" aria-label="API sections">
+      <a href="index.html">Overview</a>
+      <a href="routes.html">Routes</a>
+      <a href="responses.html" aria-current="page">Responses</a>
+      <a href="limits.html">Limits</a>
+    </nav>
+
+    <section class="section">
+      <h2>Helpers</h2>
+      <ul class="plain">
+        <li><code>teapot_json</code> / <code>teapot_text</code> / <code>teapot_bytes</code> / <code>teapot_html</code></li>
+        <li><code>teapot_response_header</code> / <code>teapot_response_headerf</code> — copy name/value; reject CR/LF and reserved names</li>
+        <li>Wire order: status → Content-Type → Content-Length → Connection: close → extras → body</li>
+      </ul>
+<pre><code>teapot_response r = teapot_html(TEAPOT_HTTP_OK, "&lt;p&gt;hi&lt;/p&gt;");
+teapot_response_header(&amp;r, "HX-Trigger", "teapot:flash");
+return r;</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Live htmx toys</h2>
+      <p class="muted">Fragments swap into named targets only. Chrome stays outside swap roots. Handlers land in Task 4 (<code>/frag/*</code>).</p>
+
+      <!-- Task 4 targets:
+           #frag-get-demo   ← hx-get="/frag/ping" (or responses GET toy)
+           #frag-post-demo  ← hx-post="/frag/echo-toy" (side-effect free)
+           #status-line     ← HX-Trigger teapot:flash (accent flash, not a toast)
+      -->
+      <div class="frag-toy">
+        <h3>GET swap</h3>
+        <p class="muted">htmx <code>hx-get</code> into <code>#frag-get-demo</code>.</p>
+        <div class="frag-actions">
+          <button type="button"
+                  hx-get="/frag/ping"
+                  hx-target="#frag-get-demo"
+                  hx-swap="innerHTML">
+            GET /frag/ping
+          </button>
+        </div>
+        <div id="frag-get-demo" class="frag-target" aria-live="polite">Waiting for Task 4 handler.</div>
+      </div>
+
+      <div class="frag-toy">
+        <h3>POST swap</h3>
+        <p class="muted">htmx <code>hx-post</code> into <code>#frag-post-demo</code>. Side-effect free.</p>
+        <div class="frag-actions">
+          <button type="button"
+                  hx-post="/frag/echo-toy"
+                  hx-target="#frag-post-demo"
+                  hx-swap="innerHTML">
+            POST /frag/echo-toy
+          </button>
+        </div>
+        <div id="frag-post-demo" class="frag-target" aria-live="polite">Waiting for Task 4 handler.</div>
+      </div>
+
+      <div class="frag-toy">
+        <h3>HX-Trigger flash</h3>
+        <p class="muted">Status line / accent flash via <code>HX-Trigger</code> → <code>teapot:flash</code> on <code>#status-line</code>.</p>
+        <div class="frag-actions">
+          <button type="button"
+                  hx-get="/frag/hx-trigger"
+                  hx-target="#frag-trigger-body"
+                  hx-swap="innerHTML">
+            GET /frag/hx-trigger
+          </button>
+        </div>
+        <div id="frag-trigger-body" class="frag-target">Body swap landing zone.</div>
+        <div id="status-line" class="status-line" aria-live="polite">status idle</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../js/theme.js"></script>
+  <script src="../vendor/htmx.min.js"></script>
+</body>
+</html>
