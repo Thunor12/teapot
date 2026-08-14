@@ -155,12 +155,7 @@ static void test_clamping(void)
     snprintf(buf, buflen + 1, "%s: %s\r\n", long_name, long_val);
 
     tp_extract_header_keyval(&h, buf, strlen(buf));
-    ok("clamping -> parsed 1 header", h.count == 1);
-    const tp_header_line *hl = get_line(&h, 0);
-    size_t parsed_name_len = hl && hl->name.items ? strlen(hl->name.items) : 0;
-    size_t parsed_val_len = hl && hl->value.items ? strlen(hl->value.items) : 0;
-    ok("name clamped", parsed_name_len <= (size_t)TP_MAX_HEADER_NAME_LEN);
-    ok("value clamped", parsed_val_len <= (size_t)TP_MAX_HEADER_VALUE_LEN);
+    ok("oversize rejected -> 0 headers", h.count == 0);
 
     tp_headers_free(&h);
     free(buf);
