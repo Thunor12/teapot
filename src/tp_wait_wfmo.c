@@ -19,6 +19,7 @@ typedef struct {
     stb_teapot_socket_t fd[TP_WFMO_MAX];
     void *udata[TP_WFMO_MAX];
     int interest[TP_WFMO_MAX];
+    int primed[TP_WFMO_MAX]; /* 1 after a new-OUT WSASetEvent pulse */
     int count;
 } tp_wait;
 
@@ -30,11 +31,15 @@ static int tp_wait_find(tp_wait *w, stb_teapot_socket_t fd)
     return -1;
 }
 
-/* FD_WRITE is edge-triggered: arm the event so an already-writable socket wakes. */
-static int tp_wfmo_select(stb_teapot_socket_t fd, WSAEVENT ev, int events)
+/* Pulse WSASetEvent only when OUT is newly armed (already-writable edge). */
+static int tp_wfmo_select(stb_teapot_socket_t fd, WSAEVENT ev, int events, int prev, int *primed)
 {
     if (WSAEventSelect(fd, ev, TP_WFMO_MASK(events)) != 0) return -1;
-    if (events & TEAPOT_WAIT_OUT) (void)WSASetEvent(ev);
+    if ((events & TEAPOT_WAIT_OUT) && !(prev & TEAPOT_WAIT_OUT)) {
+        (void)WSASetEvent(ev);
+        *primed = 1;
+    } else
+        *primed = 0;
     return 0;
 }
 
@@ -43,17 +48,19 @@ int tp_wait_create(tp_wait *w) { memset(w, 0, sizeof(*w)); return 0; }
 int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
     WSAEVENT ev;
+    int primed = 0;
     if (w->count >= TP_WFMO_MAX) return -1;
     ev = WSACreateEvent();
     if (ev == WSA_INVALID_EVENT) return -1;
-    if (tp_wfmo_select(fd, ev, events) != 0) {
+    if (tp_wfmo_select(fd, ev, events, 0, &primed) != 0) {
         WSACloseEvent(ev);
         return -1;
     }
     w->ev[w->count] = ev;
     w->fd[w->count] = fd;
     w->udata[w->count] = udata;
-    w->interest[w->count++] = events;
+    w->interest[w->count] = events;
+    w->primed[w->count++] = primed;
     return 0;
 }
 
@@ -61,7 +68,7 @@ int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
     int i = tp_wait_find(w, fd);
     if (i < 0) return -1;
-    if (tp_wfmo_select(fd, w->ev[i], events) != 0) return -1;
+    if (tp_wfmo_select(fd, w->ev[i], events, w->interest[i], &w->primed[i]) != 0) return -1;
     w->udata[i] = udata;
     w->interest[i] = events;
     return 0;
@@ -79,6 +86,7 @@ int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
         w->fd[i] = w->fd[w->count];
         w->udata[i] = w->udata[w->count];
         w->interest[i] = w->interest[w->count];
+        w->primed[i] = w->primed[w->count];
     }
     return 0;
 }
@@ -87,7 +95,7 @@ int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
 {
     DWORD to = timeout_ms < 0 ? WSA_INFINITE : (DWORD)timeout_ms, n;
     WSANETWORKEVENTS ne;
-    int idx, events = 0;
+    int idx, events = 0, primed;
     if (w->count == 0) {
         if (timeout_ms < 0) Sleep(INFINITE);
         else Sleep(to);
@@ -103,10 +111,12 @@ int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
         (void)ResetEvent(w->ev[idx]);
         return 0;
     }
+    primed = w->primed[idx];
+    w->primed[idx] = 0;
     if (ne.lNetworkEvents & (FD_ACCEPT | FD_READ | FD_CLOSE)) events |= TEAPOT_WAIT_IN;
     if (ne.lNetworkEvents & FD_WRITE) events |= TEAPOT_WAIT_OUT;
-    /* Synthetic WSASetEvent for already-writable OUT interest. */
-    if (!events && (w->interest[idx] & TEAPOT_WAIT_OUT)) events = TEAPOT_WAIT_OUT;
+    /* Empty Enum is OUT only after a new-OUT pulse, not when OUT was already armed. */
+    if (!events && primed) events = TEAPOT_WAIT_OUT;
     if (!events || max_out < 1) return 0;
     out[0].udata = w->udata[idx];
     out[0].events = events;
