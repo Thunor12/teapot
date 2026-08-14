@@ -131,11 +131,11 @@
         if (!c)
             return;
         free_request(&c->req);
+        c->req.path = (tp_string_builder){0};
+        c->req.body = (tp_string_builder){0};
         teapot_response_free(&c->res);
         tp_sb_free(c->out);
-        c->out.items = NULL;
-        c->out.count = 0;
-        c->out.capacity = 0;
+        c->out = (tp_string_builder){0};
     }
 
     static teapot_io teapot_conn_read_head(teapot_conn *c)

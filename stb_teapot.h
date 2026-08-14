@@ -6,6 +6,38 @@
 #define _DEFAULT_SOURCE 1
 #endif
 
+#define TEAPOT_WAIT_POLL 1
+#define TEAPOT_WAIT_EPOLL 2
+#define TEAPOT_WAIT_KQUEUE 3
+#define TEAPOT_WAIT_WSAPOLL 4
+#define TEAPOT_WAIT_WFMO 5
+
+#if defined(TEAPOT_USE_WFMO)
+#define TEAPOT_WAIT TEAPOT_WAIT_WFMO
+#elif defined(TEAPOT_USE_POLL)
+#define TEAPOT_WAIT TEAPOT_WAIT_POLL
+#elif defined(TEAPOT_USE_EPOLL)
+#define TEAPOT_WAIT TEAPOT_WAIT_EPOLL
+#elif defined(TEAPOT_USE_KQUEUE)
+#define TEAPOT_WAIT TEAPOT_WAIT_KQUEUE
+#elif defined(TEAPOT_USE_WSAPOLL)
+#define TEAPOT_WAIT TEAPOT_WAIT_WSAPOLL
+#elif !defined(TEAPOT_WAIT)
+#if defined(__linux__)
+#define TEAPOT_WAIT TEAPOT_WAIT_EPOLL
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#define TEAPOT_WAIT TEAPOT_WAIT_KQUEUE
+#elif defined(_WIN32)
+#define TEAPOT_WAIT TEAPOT_WAIT_WSAPOLL
+#else
+#define TEAPOT_WAIT TEAPOT_WAIT_POLL
+#endif
+#endif
+
+#if TEAPOT_WAIT < 1 || TEAPOT_WAIT > 5
+#error "TEAPOT_WAIT backend unknown or unavailable on this OS"
+#endif
+
 // Usage:
 //
 // #define STB_TEAPOT_IMPLEMENTATION
@@ -310,6 +342,7 @@ extern "C"
     // 🧠 API
     // =====================================================
     int teapot_listen(teapot_server *server);
+    int teapot_run(teapot_server *server);
     void teapot_request_stop(teapot_server *server);
     int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock);
     stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock);
@@ -1073,11 +1106,11 @@ extern "C"
         if (!c)
             return;
         free_request(&c->req);
+        c->req.path = (tp_string_builder){0};
+        c->req.body = (tp_string_builder){0};
         teapot_response_free(&c->res);
         tp_sb_free(c->out);
-        c->out.items = NULL;
-        c->out.count = 0;
-        c->out.capacity = 0;
+        c->out = (tp_string_builder){0};
     }
 
     static teapot_io teapot_conn_read_head(teapot_conn *c)
@@ -1458,6 +1491,300 @@ extern "C"
         teapot_listener_close(listen_sock);
         return 0;
     }
+
+#if TEAPOT_WAIT == TEAPOT_WAIT_POLL
+#ifndef _WIN32
+
+#include <errno.h>
+#include <poll.h>
+
+#define TEAPOT_WAIT_IN 1
+#define TEAPOT_WAIT_OUT 2
+#define TP_PE(e) ((short)(((e) & TEAPOT_WAIT_IN ? POLLIN : 0) | ((e) & TEAPOT_WAIT_OUT ? POLLOUT : 0)))
+
+typedef struct
+{
+    void *udata;
+    int events;
+} tp_wait_event;
+
+typedef struct
+{
+    struct pollfd *pfds;
+    void **udata;
+    int count;
+    int cap;
+} tp_wait;
+
+static int tp_wait_find(tp_wait *w, stb_teapot_socket_t fd)
+{
+    int i;
+    for (i = 0; i < w->count; ++i)
+        if (w->pfds[i].fd == fd)
+            return i;
+    return -1;
+}
+
+int tp_wait_create(tp_wait *w)
+{
+    memset(w, 0, sizeof(*w));
+    return 0;
+}
+
+int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{
+    if (w->count == w->cap)
+    {
+        int cap = w->cap ? w->cap * 2 : 16;
+        struct pollfd *pfds = TP_REALLOC(w->pfds, (size_t)cap * sizeof(*pfds));
+        void **ud;
+        if (!pfds)
+            return -1;
+        w->pfds = pfds;
+        ud = TP_REALLOC(w->udata, (size_t)cap * sizeof(*ud));
+        if (!ud)
+            return -1;
+        w->udata = ud;
+        w->cap = cap;
+    }
+    w->pfds[w->count] = (struct pollfd){.fd = fd, .events = TP_PE(events)};
+    w->udata[w->count] = udata;
+    w->count++;
+    return 0;
+}
+
+int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{
+    int i = tp_wait_find(w, fd);
+    if (i < 0)
+        return -1;
+    w->pfds[i].events = TP_PE(events);
+    w->udata[i] = udata;
+    return 0;
+}
+
+int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
+{
+    int i = tp_wait_find(w, fd);
+    if (i < 0)
+        return -1;
+    w->count--;
+    if (i != w->count)
+    {
+        w->pfds[i] = w->pfds[w->count];
+        w->udata[i] = w->udata[w->count];
+    }
+    return 0;
+}
+
+int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
+{
+    int n, i, k = 0;
+    do
+        n = poll(w->pfds, (nfds_t)w->count, timeout_ms);
+    while (n < 0 && errno == EINTR);
+    if (n <= 0)
+        return n;
+    for (i = 0; i < w->count && k < max_out; ++i)
+    {
+        short re = w->pfds[i].revents;
+        int events = 0;
+        if (re & (POLLIN | POLLHUP | POLLERR | POLLNVAL))
+            events |= TEAPOT_WAIT_IN;
+        if (re & POLLOUT)
+            events |= TEAPOT_WAIT_OUT;
+        if (!events)
+            continue;
+        out[k].udata = w->udata[i];
+        out[k].events = events;
+        k++;
+    }
+    return k;
+}
+
+void tp_wait_destroy(tp_wait *w)
+{
+    TP_FREE(w->pfds);
+    TP_FREE(w->udata);
+    memset(w, 0, sizeof(*w));
+}
+
+#define TP_WAIT_READY 1
+#endif
+#endif
+
+#ifdef TP_WAIT_READY
+
+typedef struct
+{
+    teapot_server *server;
+    tp_wait *w;
+    stb_teapot_socket_t listen_sock;
+    teapot_conn *slab;
+    int max;
+    int listen_armed;
+} tp_run_ctx;
+
+static void tp_run_disarm(tp_run_ctx *ctx)
+{
+    if (!ctx->listen_armed)
+        return;
+    tp_wait_del(ctx->w, ctx->listen_sock);
+    ctx->listen_armed = 0;
+}
+
+static void tp_run_drop(tp_run_ctx *ctx, teapot_conn *c)
+{
+    tp_wait_del(ctx->w, c->fd);
+    teapot_conn_free(c);
+    teapot_close(c->fd);
+    c->slot_used = 0;
+    if (!ctx->listen_armed &&
+        tp_wait_add(ctx->w, ctx->listen_sock, TEAPOT_WAIT_IN, NULL) == 0)
+        ctx->listen_armed = 1;
+}
+
+static int tp_run_walk_reads(tp_run_ctx *ctx, int drop)
+{
+    int ms = 250, i;
+    uint64_t now = tp_now_ms();
+    for (i = 0; i < ctx->max; ++i)
+    {
+        teapot_conn *c = &ctx->slab[i];
+        uint64_t rem;
+        if (!c->slot_used || !c->deadline_ms)
+            continue;
+        if (c->phase != TEAPOT_CONN_READ_HEAD && c->phase != TEAPOT_CONN_READ_BODY)
+            continue;
+        if (now >= c->deadline_ms)
+        {
+            if (drop)
+                tp_run_drop(ctx, c);
+            else
+                return 0;
+            continue;
+        }
+        rem = c->deadline_ms - now;
+        if (rem < (uint64_t)ms)
+            ms = (int)rem;
+        if (ms < 1)
+            ms = 1;
+    }
+    return ms;
+}
+
+static void tp_run_accept(tp_run_ctx *ctx)
+{
+    for (;;)
+    {
+        int slot;
+        stb_teapot_socket_t client;
+        teapot_conn *c;
+        if (ctx->server->stop)
+            return;
+        for (slot = 0; slot < ctx->max; ++slot)
+            if (!ctx->slab[slot].slot_used)
+                break;
+        if (slot == ctx->max)
+        {
+            tp_run_disarm(ctx);
+            return;
+        }
+        client = teapot_listener_accept(ctx->listen_sock);
+        if (!teapot_socket_ok(client))
+            return;
+        c = &ctx->slab[slot];
+        if (teapot_set_nonblock(client) != 0)
+        {
+            teapot_close(client);
+            tp_run_disarm(ctx);
+            return;
+        }
+        teapot_conn_init(c, ctx->server, client);
+        c->slot_used = 1;
+        if (tp_wait_add(ctx->w, client, TEAPOT_WAIT_IN, c) != 0)
+        {
+            teapot_conn_free(c);
+            c->slot_used = 0;
+            teapot_close(client);
+            tp_run_disarm(ctx);
+            return;
+        }
+    }
+}
+
+int teapot_run(teapot_server *server)
+{
+    stb_teapot_socket_t listen_sock;
+    tp_wait w;
+    teapot_conn *slab;
+    tp_run_ctx ctx;
+    int max, i;
+    tp_wait_event ev[64];
+
+    if (!server)
+        return 1;
+    if (teapot_listener_open(server, &listen_sock) < 0)
+        return 1;
+    if (teapot_set_nonblock(listen_sock) != 0 || tp_wait_create(&w) != 0)
+    {
+        teapot_listener_close(listen_sock);
+        return 1;
+    }
+    max = server->max_conns > 0 ? server->max_conns : TEAPOT_MAX_CONNS;
+    slab = TP_REALLOC(NULL, (size_t)max * sizeof(*slab));
+    if (!slab || tp_wait_add(&w, listen_sock, TEAPOT_WAIT_IN, NULL) != 0)
+    {
+        TP_FREE(slab);
+        tp_wait_destroy(&w);
+        teapot_listener_close(listen_sock);
+        return 1;
+    }
+    memset(slab, 0, (size_t)max * sizeof(*slab));
+    ctx = (tp_run_ctx){server, &w, listen_sock, slab, max, 1};
+    while (!server->stop)
+    {
+        int n = tp_wait_wait(&w, tp_run_walk_reads(&ctx, 0), ev, 64);
+        tp_run_walk_reads(&ctx, 1);
+        if (server->stop)
+            break;
+        if (n < 0)
+            continue;
+        for (i = 0; i < n; ++i)
+        {
+            teapot_conn *c = ev[i].udata;
+            teapot_io io;
+            if (!c)
+            {
+                tp_run_accept(&ctx);
+                continue;
+            }
+            if (!c->slot_used)
+                continue;
+            io = teapot_conn_step(c);
+            if (io == TEAPOT_IO_NEED_READ)
+                tp_wait_mod(&w, c->fd, TEAPOT_WAIT_IN, c);
+            else if (io == TEAPOT_IO_NEED_WRITE)
+                tp_wait_mod(&w, c->fd, TEAPOT_WAIT_OUT, c);
+            else
+                tp_run_drop(&ctx, c);
+        }
+    }
+    for (i = 0; i < max; ++i)
+    {
+        if (!slab[i].slot_used)
+            continue;
+        tp_wait_del(&w, slab[i].fd);
+        teapot_conn_free(&slab[i]);
+        teapot_close(slab[i].fd);
+    }
+    TP_FREE(slab);
+    tp_wait_destroy(&w);
+    teapot_listener_close(listen_sock);
+    return 0;
+}
+
+#endif
 #endif // STB_TEAPOT_IMPLEMENTATION
 
 #ifdef __cplusplus

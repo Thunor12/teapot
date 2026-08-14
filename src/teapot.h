@@ -5,6 +5,38 @@
 #define _DEFAULT_SOURCE 1
 #endif
 
+#define TEAPOT_WAIT_POLL 1
+#define TEAPOT_WAIT_EPOLL 2
+#define TEAPOT_WAIT_KQUEUE 3
+#define TEAPOT_WAIT_WSAPOLL 4
+#define TEAPOT_WAIT_WFMO 5
+
+#if defined(TEAPOT_USE_WFMO)
+#define TEAPOT_WAIT TEAPOT_WAIT_WFMO
+#elif defined(TEAPOT_USE_POLL)
+#define TEAPOT_WAIT TEAPOT_WAIT_POLL
+#elif defined(TEAPOT_USE_EPOLL)
+#define TEAPOT_WAIT TEAPOT_WAIT_EPOLL
+#elif defined(TEAPOT_USE_KQUEUE)
+#define TEAPOT_WAIT TEAPOT_WAIT_KQUEUE
+#elif defined(TEAPOT_USE_WSAPOLL)
+#define TEAPOT_WAIT TEAPOT_WAIT_WSAPOLL
+#elif !defined(TEAPOT_WAIT)
+#if defined(__linux__)
+#define TEAPOT_WAIT TEAPOT_WAIT_EPOLL
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#define TEAPOT_WAIT TEAPOT_WAIT_KQUEUE
+#elif defined(_WIN32)
+#define TEAPOT_WAIT TEAPOT_WAIT_WSAPOLL
+#else
+#define TEAPOT_WAIT TEAPOT_WAIT_POLL
+#endif
+#endif
+
+#if TEAPOT_WAIT < 1 || TEAPOT_WAIT > 5
+#error "TEAPOT_WAIT backend unknown or unavailable on this OS"
+#endif
+
 // Usage:
 //
 // #define STB_TEAPOT_IMPLEMENTATION
@@ -309,6 +341,7 @@ extern "C"
     // 🧠 API
     // =====================================================
     int teapot_listen(teapot_server *server);
+    int teapot_run(teapot_server *server);
     void teapot_request_stop(teapot_server *server);
     int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock);
     stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock);
