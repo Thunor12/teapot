@@ -241,6 +241,7 @@ int main(void)
         .port = 8080,
         .routes = routes,
         .route_count = sizeof(routes) / sizeof(routes[0]),
+        .bind_host = "127.0.0.1",
     };
 
     stb_teapot_socket_t listen_sock;
