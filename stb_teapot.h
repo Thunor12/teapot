@@ -92,7 +92,6 @@ int socket_ok(stb_teapot_socket_t s);
 // =====================================================
 #define tp_da_free(da) TP_FREE((da).items)
 #define tp_da_len(da) ((da).count)
-#define tp_da_capacity(da) ((da).capacity)
 
 #define tp_da_reserve(da, expected_capacity)                                                                            \
     do                                                                                                                  \
@@ -121,28 +120,17 @@ int socket_ok(stb_teapot_socket_t s);
     } while (0)
 
 // Append several items to a dynamic array
-#define tp_da_append_many(da, new_items, new_items_count)                                         \
-    do                                                                                            \
-    {                                                                                             \
-        tp_da_reserve((da), (da)->count + (new_items_count));                                     \
-        memcpy((da)->items + (da)->count, (new_items), (new_items_count) * sizeof(*(da)->items)); \
-        (da)->count += (new_items_count);                                                         \
-    } while (0)
-
-#define tp_da_resize(da, new_size)     \
-    do                                 \
-    {                                  \
-        tp_da_reserve((da), new_size); \
-        (da)->count = (new_size);      \
-    } while (0)
-
-#define tp_da_last(da) (da)->items[(TP_ASSERT((da)->count > 0), (da)->count - 1)]
-#define tp_da_remove_unordered(da, i)                \
-    do                                               \
-    {                                                \
-        size_t j = (i);                              \
-        TP_ASSERT(j < (da)->count);                  \
-        (da)->items[j] = (da)->items[--(da)->count]; \
+#define tp_da_append_many(da, new_items, new_items_count)                                           \
+    do                                                                                              \
+    {                                                                                               \
+        size_t tp_da_new_items_count__ = (new_items_count);                                         \
+        if (tp_da_new_items_count__ > 0)                                                            \
+        {                                                                                           \
+            tp_da_reserve((da), (da)->count + tp_da_new_items_count__);                             \
+            memcpy((da)->items + (da)->count, (new_items),                                          \
+                   tp_da_new_items_count__ * sizeof(*(da)->items));                                 \
+            (da)->count += tp_da_new_items_count__;                                                 \
+        }                                                                                           \
     } while (0)
 
     typedef struct
@@ -151,32 +139,6 @@ int socket_ok(stb_teapot_socket_t s);
         size_t count;
         size_t capacity;
     } tp_string_builder;
-
-    typedef struct
-    {
-        char **items;
-        size_t count;
-        size_t capacity;
-    } tp_string_array;
-
-#define tp_sa_append_str(sa, str, str_len)                                \
-    do                                                                    \
-    {                                                                     \
-        char *s = TP_DECLTYPE_CAST(char *) TP_REALLOC(NULL, str_len + 1); \
-        memcpy(s, str, str_len);                                          \
-        s[str_len] = '\0';                                                \
-        tp_da_append(sa, s);                                              \
-    } while (0)
-
-#define tp_sa_free(sa)                          \
-    do                                          \
-    {                                           \
-        for (size_t i = 0; i < (sa).count; i++) \
-        {                                       \
-            TP_FREE((sa).items[i]);             \
-        }                                       \
-        TP_FREE((sa).items);                    \
-    } while (0)
 
 // Append a sized buffer to a string builder
 #define tp_sb_append_buf(sb, buf, size) tp_da_append_many(sb, buf, size)
@@ -464,31 +426,6 @@ int socket_ok(stb_teapot_socket_t s);
         return n;
     }
 
-    // TODO: See if we can do without this function entirely
-    void tp_chop_by_delim_into_array(tp_string_array *sa, char *src, size_t src_len, const char *delim)
-    {
-        if (!sa || !src || !delim)
-        {
-            return;
-        }
-
-        tp_string_builder sb = {0};
-        tp_sb_append_buf(&sb, src, src_len);
-
-        *sa = (tp_string_array){0};
-
-        char *token = strtok(sb.items, delim);
-        if (token)
-        {
-            do
-            {
-                tp_sa_append_str(sa, token, strlen(token));
-            } while ((token = strtok(NULL, delim)));
-        }
-
-        tp_sb_free(sb);
-    }
-
     typedef struct
     {
         const char *p;
@@ -632,14 +569,6 @@ int socket_ok(stb_teapot_socket_t s);
         const char *val = hl->value.items ? hl->value.items : "";
         return (strcmp(val, expected_value) == 0) ? TP_HEADER_MATCH : TP_HEADER_FOUND;
     }
-
-// =====================================================
-// 🛠 Implementation
-// =====================================================
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
 
     static void teapot_init(void)
     {
