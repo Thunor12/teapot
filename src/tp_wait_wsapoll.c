@@ -1,15 +1,15 @@
 #include "teapot.h"
 
-#if TEAPOT_WAIT == TEAPOT_WAIT_POLL
+#if TEAPOT_WAIT == TEAPOT_WAIT_WSAPOLL
 #ifndef _WIN32
-#include <poll.h>
-
+#error "TEAPOT_WAIT_WSAPOLL requires Windows"
+#else
 #define TEAPOT_WAIT_IN 1
 #define TEAPOT_WAIT_OUT 2
-#define TP_PE(e) ((short)(((e) & TEAPOT_WAIT_IN ? POLLIN : 0) | ((e) & TEAPOT_WAIT_OUT ? POLLOUT : 0)))
+#define TP_WE(e) ((SHORT)(((e) & TEAPOT_WAIT_IN ? POLLIN : 0) | ((e) & TEAPOT_WAIT_OUT ? POLLOUT : 0)))
 
 typedef struct { void *udata; int events; } tp_wait_event;
-typedef struct { struct pollfd *pfds; void **udata; int count; int cap; } tp_wait;
+typedef struct { WSAPOLLFD *pfds; void **udata; int count; int cap; } tp_wait;
 
 static int tp_wait_find(tp_wait *w, stb_teapot_socket_t fd)
 {
@@ -25,7 +25,7 @@ int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
     if (w->count == w->cap) {
         int cap = w->cap ? w->cap * 2 : 16;
-        struct pollfd *pfds = TP_REALLOC(w->pfds, (size_t)cap * sizeof(*pfds));
+        WSAPOLLFD *pfds = TP_REALLOC(w->pfds, (size_t)cap * sizeof(*pfds));
         void **ud;
         if (!pfds) return -1;
         w->pfds = pfds;
@@ -34,7 +34,9 @@ int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
         w->udata = ud;
         w->cap = cap;
     }
-    w->pfds[w->count] = (struct pollfd){.fd = fd, .events = TP_PE(events)};
+    w->pfds[w->count].fd = fd;
+    w->pfds[w->count].events = TP_WE(events);
+    w->pfds[w->count].revents = 0;
     w->udata[w->count++] = udata;
     return 0;
 }
@@ -43,7 +45,7 @@ int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
     int i = tp_wait_find(w, fd);
     if (i < 0) return -1;
-    w->pfds[i].events = TP_PE(events);
+    w->pfds[i].events = TP_WE(events);
     w->udata[i] = udata;
     return 0;
 }
@@ -59,11 +61,10 @@ int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
 
 int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
 {
-    int n, i, k = 0;
-    do n = poll(w->pfds, (nfds_t)w->count, timeout_ms); while (n < 0 && errno == EINTR);
+    int n = WSAPoll(w->pfds, (ULONG)w->count, timeout_ms), i, k = 0;
     if (n <= 0) return n;
     for (i = 0; i < w->count && k < max_out; ++i) {
-        short re = w->pfds[i].revents;
+        SHORT re = w->pfds[i].revents;
         int events = 0;
         if (re & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) events |= TEAPOT_WAIT_IN;
         if (re & POLLOUT) events |= TEAPOT_WAIT_OUT;

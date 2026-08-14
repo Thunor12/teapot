@@ -220,6 +220,9 @@ static const char *amalgam_c_files[] = {
     "src/tp_listen.c",
     "src/tp_wait_poll.c",
     "src/tp_wait_epoll.c",
+    "src/tp_wait_kqueue.c",
+    "src/tp_wait_wsapoll.c",
+    "src/tp_wait_wfmo.c",
     "src/tp_run.c",
 };
 

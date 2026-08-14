@@ -53,7 +53,23 @@ Clang `-Wsign-conversion` is not compatible with this project's `-Werror` flags;
 - Minimal dependencies
 
 ## Usage
-Include `stb_teapot.h` after `#define STB_TEAPOT_IMPLEMENTATION`. See `examples/basic_server.c` for a blocking listener, `examples/threaded_server.c` for one thread per client, and `examples/demo_handlers.h` for shared hello/echo handlers.
+Include `stb_teapot.h` after `#define STB_TEAPOT_IMPLEMENTATION`. See `examples/basic_server.c` for a blocking listener, `examples/epoll_server.c` for multiplexed `teapot_run`, `examples/threaded_server.c` for one thread per client, and `examples/demo_handlers.h` for shared hello/echo handlers.
+
+## Wait backends (`teapot_run`)
+
+`teapot_run` multiplexes connections with a compile-time wait backend. Define **one** of these **before** including `stb_teapot.h` (do not set `TEAPOT_WAIT` by number):
+
+| Macro | Backend | Default on |
+| --- | --- | --- |
+| `TEAPOT_USE_EPOLL` | Linux epoll | Linux |
+| `TEAPOT_USE_POLL` | POSIX `poll` | other Unix |
+| `TEAPOT_USE_KQUEUE` | kqueue | macOS / BSD |
+| `TEAPOT_USE_WSAPOLL` | `WSAPoll` | Windows |
+| `TEAPOT_USE_WFMO` | `WSAEventSelect` + `WSAWaitForMultipleEvents` | (opt-in) |
+
+Example: `#define TEAPOT_USE_POLL` then `#include "stb_teapot.h"`.
+
+**WFMO cap:** `TEAPOT_USE_WFMO` supports at most **64** wait entries (listen socket + clients). A 65th `tp_wait_add` fails; the reactor disarms listen until a slot frees. Prefer `TEAPOT_USE_WSAPOLL` when you need more concurrent fds on Windows.
 
 ## License
 This project is licensed under the MIT License. See the LICENSE file for details.

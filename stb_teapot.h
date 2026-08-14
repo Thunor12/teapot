@@ -1494,55 +1494,35 @@ extern "C"
 
 #if TEAPOT_WAIT == TEAPOT_WAIT_POLL
 #ifndef _WIN32
-
 #include <poll.h>
 
 #define TEAPOT_WAIT_IN 1
 #define TEAPOT_WAIT_OUT 2
 #define TP_PE(e) ((short)(((e) & TEAPOT_WAIT_IN ? POLLIN : 0) | ((e) & TEAPOT_WAIT_OUT ? POLLOUT : 0)))
 
-typedef struct
-{
-    void *udata;
-    int events;
-} tp_wait_event;
-
-typedef struct
-{
-    struct pollfd *pfds;
-    void **udata;
-    int count;
-    int cap;
-} tp_wait;
+typedef struct { void *udata; int events; } tp_wait_event;
+typedef struct { struct pollfd *pfds; void **udata; int count; int cap; } tp_wait;
 
 static int tp_wait_find(tp_wait *w, stb_teapot_socket_t fd)
 {
     int i;
     for (i = 0; i < w->count; ++i)
-        if (w->pfds[i].fd == fd)
-            return i;
+        if (w->pfds[i].fd == fd) return i;
     return -1;
 }
 
-int tp_wait_create(tp_wait *w)
-{
-    memset(w, 0, sizeof(*w));
-    return 0;
-}
+int tp_wait_create(tp_wait *w) { memset(w, 0, sizeof(*w)); return 0; }
 
 int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
-    if (w->count == w->cap)
-    {
+    if (w->count == w->cap) {
         int cap = w->cap ? w->cap * 2 : 16;
         struct pollfd *pfds = TP_REALLOC(w->pfds, (size_t)cap * sizeof(*pfds));
         void **ud;
-        if (!pfds)
-            return -1;
+        if (!pfds) return -1;
         w->pfds = pfds;
         ud = TP_REALLOC(w->udata, (size_t)cap * sizeof(*ud));
-        if (!ud)
-            return -1;
+        if (!ud) return -1;
         w->udata = ud;
         w->cap = cap;
     }
@@ -1554,8 +1534,7 @@ int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
     int i = tp_wait_find(w, fd);
-    if (i < 0)
-        return -1;
+    if (i < 0) return -1;
     w->pfds[i].events = TP_PE(events);
     w->udata[i] = udata;
     return 0;
@@ -1564,38 +1543,25 @@ int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
 {
     int i = tp_wait_find(w, fd);
-    if (i < 0)
-        return -1;
+    if (i < 0) return -1;
     w->count--;
-    if (i != w->count)
-    {
-        w->pfds[i] = w->pfds[w->count];
-        w->udata[i] = w->udata[w->count];
-    }
+    if (i != w->count) { w->pfds[i] = w->pfds[w->count]; w->udata[i] = w->udata[w->count]; }
     return 0;
 }
 
 int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
 {
     int n, i, k = 0;
-    do
-        n = poll(w->pfds, (nfds_t)w->count, timeout_ms);
-    while (n < 0 && errno == EINTR);
-    if (n <= 0)
-        return n;
-    for (i = 0; i < w->count && k < max_out; ++i)
-    {
+    do n = poll(w->pfds, (nfds_t)w->count, timeout_ms); while (n < 0 && errno == EINTR);
+    if (n <= 0) return n;
+    for (i = 0; i < w->count && k < max_out; ++i) {
         short re = w->pfds[i].revents;
         int events = 0;
-        if (re & (POLLIN | POLLHUP | POLLERR | POLLNVAL))
-            events |= TEAPOT_WAIT_IN;
-        if (re & POLLOUT)
-            events |= TEAPOT_WAIT_OUT;
-        if (!events)
-            continue;
+        if (re & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) events |= TEAPOT_WAIT_IN;
+        if (re & POLLOUT) events |= TEAPOT_WAIT_OUT;
+        if (!events) continue;
         out[k].udata = w->udata[i];
-        out[k].events = events;
-        k++;
+        out[k++].events = events;
     }
     return k;
 }
@@ -1606,7 +1572,6 @@ void tp_wait_destroy(tp_wait *w)
     TP_FREE(w->udata);
     memset(w, 0, sizeof(*w));
 }
-
 #define TP_WAIT_READY 1
 #endif
 #endif
@@ -1615,29 +1580,16 @@ void tp_wait_destroy(tp_wait *w)
 #ifndef __linux__
 #error "TEAPOT_WAIT_EPOLL requires Linux"
 #else
-
 #include <sys/epoll.h>
 
 #define TEAPOT_WAIT_IN 1
 #define TEAPOT_WAIT_OUT 2
 #define TP_EE(e) (((e) & TEAPOT_WAIT_IN ? EPOLLIN : 0u) | ((e) & TEAPOT_WAIT_OUT ? EPOLLOUT : 0u))
 
-typedef struct
-{
-    void *udata;
-    int events;
-} tp_wait_event;
+typedef struct { void *udata; int events; } tp_wait_event;
+typedef struct { int epfd; } tp_wait;
 
-typedef struct
-{
-    int epfd;
-} tp_wait;
-
-int tp_wait_create(tp_wait *w)
-{
-    w->epfd = epoll_create1(0);
-    return w->epfd < 0 ? -1 : 0;
-}
+int tp_wait_create(tp_wait *w) { w->epfd = epoll_create1(0); return w->epfd < 0 ? -1 : 0; }
 
 int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
 {
@@ -1660,36 +1612,288 @@ int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
 {
     struct epoll_event buf[64];
     int lim = max_out < 64 ? max_out : 64, n, i, k = 0;
-    do
-        n = epoll_wait(w->epfd, buf, lim, timeout_ms);
-    while (n < 0 && errno == EINTR);
-    if (n <= 0)
-        return n;
-    for (i = 0; i < n; ++i)
-    {
+    do n = epoll_wait(w->epfd, buf, lim, timeout_ms); while (n < 0 && errno == EINTR);
+    if (n <= 0) return n;
+    for (i = 0; i < n; ++i) {
         uint32_t re = buf[i].events;
         int events = 0;
-        if (re & (EPOLLIN | EPOLLHUP | EPOLLERR))
-            events |= TEAPOT_WAIT_IN;
-        if (re & EPOLLOUT)
-            events |= TEAPOT_WAIT_OUT;
-        if (!events)
-            continue;
+        if (re & (EPOLLIN | EPOLLHUP | EPOLLERR)) events |= TEAPOT_WAIT_IN;
+        if (re & EPOLLOUT) events |= TEAPOT_WAIT_OUT;
+        if (!events) continue;
         out[k].udata = buf[i].data.ptr;
-        out[k].events = events;
-        k++;
+        out[k++].events = events;
     }
     return k;
 }
 
 void tp_wait_destroy(tp_wait *w)
 {
-    if (w->epfd >= 0)
-        close(w->epfd);
+    if (w->epfd >= 0) close(w->epfd);
     memset(w, 0, sizeof(*w));
     w->epfd = -1;
 }
+#define TP_WAIT_READY 1
+#endif
+#endif
 
+#if TEAPOT_WAIT == TEAPOT_WAIT_KQUEUE
+#if !(defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__))
+#error "TEAPOT_WAIT_KQUEUE requires Apple or BSD"
+#else
+#include <errno.h>
+#include <sys/event.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#define TEAPOT_WAIT_IN 1
+#define TEAPOT_WAIT_OUT 2
+
+typedef struct { void *udata; int events; } tp_wait_event;
+typedef struct { int kq; } tp_wait;
+
+static int tp_kq_set(int kq, stb_teapot_socket_t fd, int events, void *udata)
+{
+    struct kevent ch[2];
+    int n = 0;
+    if (events & TEAPOT_WAIT_IN)
+        EV_SET(&ch[n++], (uintptr_t)fd, EVFILT_READ, EV_ADD, 0, 0, udata);
+    if (events & TEAPOT_WAIT_OUT)
+        EV_SET(&ch[n++], (uintptr_t)fd, EVFILT_WRITE, EV_ADD, 0, 0, udata);
+    return n && kevent(kq, ch, n, NULL, 0, NULL) == 0 ? 0 : -1;
+}
+
+static void tp_kq_clr(int kq, stb_teapot_socket_t fd)
+{
+    struct kevent ch;
+    EV_SET(&ch, (uintptr_t)fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+    (void)kevent(kq, &ch, 1, NULL, 0, NULL);
+    EV_SET(&ch, (uintptr_t)fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+    (void)kevent(kq, &ch, 1, NULL, 0, NULL);
+}
+
+int tp_wait_create(tp_wait *w) { w->kq = kqueue(); return w->kq < 0 ? -1 : 0; }
+int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{ return tp_kq_set(w->kq, fd, events, udata); }
+int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{ tp_kq_clr(w->kq, fd); return tp_kq_set(w->kq, fd, events, udata); }
+int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd) { tp_kq_clr(w->kq, fd); return 0; }
+
+int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
+{
+    struct kevent buf[64];
+    struct timespec ts, *tsp = NULL;
+    int lim = max_out < 64 ? max_out : 64, n, i, k = 0;
+    if (timeout_ms >= 0) {
+        ts.tv_sec = timeout_ms / 1000;
+        ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+        tsp = &ts;
+    }
+    do n = kevent(w->kq, NULL, 0, buf, lim, tsp); while (n < 0 && errno == EINTR);
+    if (n <= 0) return n;
+    for (i = 0; i < n; ++i) {
+        int events = 0;
+        if (buf[i].filter == EVFILT_READ) events |= TEAPOT_WAIT_IN;
+        if (buf[i].filter == EVFILT_WRITE) events |= TEAPOT_WAIT_OUT;
+        if (!events) continue;
+        out[k].udata = buf[i].udata;
+        out[k++].events = events;
+    }
+    return k;
+}
+
+void tp_wait_destroy(tp_wait *w)
+{
+    if (w->kq >= 0) close(w->kq);
+    memset(w, 0, sizeof(*w));
+    w->kq = -1;
+}
+#define TP_WAIT_READY 1
+#endif
+#endif
+
+#if TEAPOT_WAIT == TEAPOT_WAIT_WSAPOLL
+#ifndef _WIN32
+#error "TEAPOT_WAIT_WSAPOLL requires Windows"
+#else
+#define TEAPOT_WAIT_IN 1
+#define TEAPOT_WAIT_OUT 2
+#define TP_WE(e) ((SHORT)(((e) & TEAPOT_WAIT_IN ? POLLIN : 0) | ((e) & TEAPOT_WAIT_OUT ? POLLOUT : 0)))
+
+typedef struct { void *udata; int events; } tp_wait_event;
+typedef struct { WSAPOLLFD *pfds; void **udata; int count; int cap; } tp_wait;
+
+static int tp_wait_find(tp_wait *w, stb_teapot_socket_t fd)
+{
+    int i;
+    for (i = 0; i < w->count; ++i)
+        if (w->pfds[i].fd == fd) return i;
+    return -1;
+}
+
+int tp_wait_create(tp_wait *w) { memset(w, 0, sizeof(*w)); return 0; }
+
+int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{
+    if (w->count == w->cap) {
+        int cap = w->cap ? w->cap * 2 : 16;
+        WSAPOLLFD *pfds = TP_REALLOC(w->pfds, (size_t)cap * sizeof(*pfds));
+        void **ud;
+        if (!pfds) return -1;
+        w->pfds = pfds;
+        ud = TP_REALLOC(w->udata, (size_t)cap * sizeof(*ud));
+        if (!ud) return -1;
+        w->udata = ud;
+        w->cap = cap;
+    }
+    w->pfds[w->count].fd = fd;
+    w->pfds[w->count].events = TP_WE(events);
+    w->pfds[w->count].revents = 0;
+    w->udata[w->count++] = udata;
+    return 0;
+}
+
+int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{
+    int i = tp_wait_find(w, fd);
+    if (i < 0) return -1;
+    w->pfds[i].events = TP_WE(events);
+    w->udata[i] = udata;
+    return 0;
+}
+
+int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
+{
+    int i = tp_wait_find(w, fd);
+    if (i < 0) return -1;
+    w->count--;
+    if (i != w->count) { w->pfds[i] = w->pfds[w->count]; w->udata[i] = w->udata[w->count]; }
+    return 0;
+}
+
+int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
+{
+    int n = WSAPoll(w->pfds, (ULONG)w->count, timeout_ms), i, k = 0;
+    if (n <= 0) return n;
+    for (i = 0; i < w->count && k < max_out; ++i) {
+        SHORT re = w->pfds[i].revents;
+        int events = 0;
+        if (re & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) events |= TEAPOT_WAIT_IN;
+        if (re & POLLOUT) events |= TEAPOT_WAIT_OUT;
+        if (!events) continue;
+        out[k].udata = w->udata[i];
+        out[k++].events = events;
+    }
+    return k;
+}
+
+void tp_wait_destroy(tp_wait *w)
+{
+    TP_FREE(w->pfds);
+    TP_FREE(w->udata);
+    memset(w, 0, sizeof(*w));
+}
+#define TP_WAIT_READY 1
+#endif
+#endif
+
+#if TEAPOT_WAIT == TEAPOT_WAIT_WFMO
+#ifndef _WIN32
+#error "TEAPOT_WAIT_WFMO requires Windows"
+#else
+#define TEAPOT_WAIT_IN 1
+#define TEAPOT_WAIT_OUT 2
+#define TP_WFMO_MAX 64
+#define TP_WFMO_IN (FD_ACCEPT | FD_READ | FD_CLOSE)
+#define TP_WFMO_MASK(e) \
+    (((e) & TEAPOT_WAIT_IN ? TP_WFMO_IN : 0L) | ((e) & TEAPOT_WAIT_OUT ? FD_WRITE : 0L))
+
+typedef struct { void *udata; int events; } tp_wait_event;
+typedef struct {
+    WSAEVENT ev[TP_WFMO_MAX];
+    stb_teapot_socket_t fd[TP_WFMO_MAX];
+    void *udata[TP_WFMO_MAX];
+    int count;
+} tp_wait;
+
+static int tp_wait_find(tp_wait *w, stb_teapot_socket_t fd)
+{
+    int i;
+    for (i = 0; i < w->count; ++i)
+        if (w->fd[i] == fd) return i;
+    return -1;
+}
+
+int tp_wait_create(tp_wait *w) { memset(w, 0, sizeof(*w)); return 0; }
+
+int tp_wait_add(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{
+    WSAEVENT ev;
+    if (w->count >= TP_WFMO_MAX) return -1;
+    ev = WSACreateEvent();
+    if (ev == WSA_INVALID_EVENT) return -1;
+    if (WSAEventSelect(fd, ev, TP_WFMO_MASK(events)) != 0) {
+        WSACloseEvent(ev);
+        return -1;
+    }
+    w->ev[w->count] = ev;
+    w->fd[w->count] = fd;
+    w->udata[w->count++] = udata;
+    return 0;
+}
+
+int tp_wait_mod(tp_wait *w, stb_teapot_socket_t fd, int events, void *udata)
+{
+    int i = tp_wait_find(w, fd);
+    if (i < 0) return -1;
+    if (WSAEventSelect(fd, w->ev[i], TP_WFMO_MASK(events)) != 0) return -1;
+    w->udata[i] = udata;
+    return 0;
+}
+
+int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
+{
+    int i = tp_wait_find(w, fd);
+    if (i < 0) return -1;
+    (void)WSAEventSelect(fd, NULL, 0);
+    WSACloseEvent(w->ev[i]);
+    w->count--;
+    if (i != w->count) {
+        w->ev[i] = w->ev[w->count];
+        w->fd[i] = w->fd[w->count];
+        w->udata[i] = w->udata[w->count];
+    }
+    return 0;
+}
+
+int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
+{
+    DWORD to = timeout_ms < 0 ? WSA_INFINITE : (DWORD)timeout_ms, n;
+    WSANETWORKEVENTS ne;
+    int idx, events = 0;
+    if (w->count == 0) return 0;
+    n = WSAWaitForMultipleEvents((DWORD)w->count, w->ev, FALSE, to, FALSE);
+    if (n == WSA_WAIT_TIMEOUT) return 0;
+    if (n == WSA_WAIT_FAILED) return -1;
+    idx = (int)(n - WSA_WAIT_EVENT_0);
+    if (idx < 0 || idx >= w->count) return -1;
+    if (WSAEnumNetworkEvents(w->fd[idx], w->ev[idx], &ne) != 0) return -1;
+    if (ne.lNetworkEvents & TP_WFMO_IN) events |= TEAPOT_WAIT_IN;
+    if (ne.lNetworkEvents & FD_WRITE) events |= TEAPOT_WAIT_OUT;
+    if (!events || max_out < 1) return 0;
+    out[0].udata = w->udata[idx];
+    out[0].events = events;
+    return 1;
+}
+
+void tp_wait_destroy(tp_wait *w)
+{
+    int i;
+    for (i = 0; i < w->count; ++i) {
+        (void)WSAEventSelect(w->fd[i], NULL, 0);
+        WSACloseEvent(w->ev[i]);
+    }
+    memset(w, 0, sizeof(*w));
+}
 #define TP_WAIT_READY 1
 #endif
 #endif
