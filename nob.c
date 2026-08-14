@@ -96,6 +96,7 @@ const char *tests_and_examples[] = {
     TEST_DIR "low_level_test_stb_teapot.c",
     TEST_DIR "header_parse.c",
     TEST_DIR "unit_test_headers.c",
+    TEST_DIR "unit_test_request.c",
     TEST_DIR "unit_test_response.c",
     EXAMPLE_DIR "threaded_server.c",
     EXAMPLE_DIR "thread_pool_server_crossplat.c",
@@ -103,6 +104,7 @@ const char *tests_and_examples[] = {
 
 static const char *unit_tests[] = {
     BUILD_DIR "unit_test_headers",
+    BUILD_DIR "unit_test_request",
     BUILD_DIR "unit_test_response",
 };
 
@@ -149,9 +151,23 @@ defer:
     return ret;
 }
 
+static int have_valgrind(void)
+{
+#ifdef _WIN32
+    return 0;
+#else
+    return nob_file_exists("/usr/bin/valgrind") > 0 || nob_file_exists("/usr/local/bin/valgrind") > 0;
+#endif
+}
+
 static int run_unit_tests(void)
 {
     int ret = 0;
+    int use_valgrind = have_valgrind();
+    if (use_valgrind)
+    {
+        nob_log(NOB_INFO, "Running unit tests under valgrind --leak-check=full");
+    }
     for (size_t i = 0; i < NOB_ARRAY_LEN(unit_tests); i++)
     {
         Nob_Cmd cmd = {0};
@@ -161,7 +177,14 @@ static int run_unit_tests(void)
 #else
         snprintf(path, sizeof(path), "%s", unit_tests[i]);
 #endif
-        nob_cmd_append(&cmd, path);
+        if (use_valgrind)
+        {
+            nob_cmd_append(&cmd, "valgrind", "--leak-check=full", "--error-exitcode=99", "--quiet", path);
+        }
+        else
+        {
+            nob_cmd_append(&cmd, path);
+        }
         if (!nob_cmd_run(&cmd))
         {
             ret = 1;
