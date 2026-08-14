@@ -31,6 +31,7 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <signal.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -293,12 +294,18 @@ extern "C"
         int port;
         const teapot_route *routes;
         size_t route_count;
+        const char *bind_host;
+        int backlog;
+        volatile sig_atomic_t stop;
+        void *user;
+        int max_conns;
     } teapot_server;
 
     // =====================================================
     // 🧠 API
     // =====================================================
     int teapot_listen(teapot_server *server);
+    void teapot_request_stop(teapot_server *server);
     int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock);
     stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock);
     void teapot_close(stb_teapot_socket_t s);
@@ -931,10 +938,40 @@ extern "C"
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <errno.h>
+#include <poll.h>
 #include <sys/socket.h>
 #endif
+
+    void teapot_request_stop(teapot_server *server)
+    {
+        server->stop = 1;
+    }
+
+    static int teapot_wait_listen(stb_teapot_socket_t listen_sock, int timeout_ms)
+    {
+#ifdef _WIN32
+        WSAPOLLFD pfd;
+        pfd.fd = listen_sock;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        return WSAPoll(&pfd, 1, timeout_ms);
+#else
+        struct pollfd pfd;
+        pfd.fd = listen_sock;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        int n;
+        do
+        {
+            n = poll(&pfd, 1, timeout_ms);
+        } while (n < 0 && errno == EINTR);
+        return n;
+#endif
+    }
 
     int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock)
     {
@@ -956,7 +993,15 @@ extern "C"
         struct sockaddr_in addr = {0};
         addr.sin_family = AF_INET;
         addr.sin_port = htons((uint16_t)server->port);
-        addr.sin_addr.s_addr = INADDR_ANY;
+        if (server->bind_host == NULL)
+        {
+            addr.sin_addr.s_addr = INADDR_ANY;
+        }
+        else if (inet_pton(AF_INET, server->bind_host, &addr.sin_addr) != 1)
+        {
+            teapot_close(s);
+            return -1;
+        }
 
         if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
         {
@@ -965,7 +1010,20 @@ extern "C"
             return -1;
         }
 
-        if (listen(s, 8) < 0)
+        {
+            struct sockaddr_in bound = {0};
+            socklen_t blen = sizeof(bound);
+            if (getsockname(s, (struct sockaddr *)&bound, &blen) < 0)
+            {
+                perror("getsockname");
+                teapot_close(s);
+                return -1;
+            }
+            server->port = (int)ntohs(bound.sin_port);
+        }
+
+        int backlog = server->backlog ? server->backlog : 8;
+        if (listen(s, backlog) < 0)
         {
             perror("listen");
             teapot_close(s);
@@ -1001,16 +1059,20 @@ extern "C"
         if (teapot_listener_open(server, &listen_sock) < 0)
             return 1;
 
-        printf("stb_teapot listening on port %d\n", server->port);
-
-        while (1)
+        while (!server->stop)
         {
+            int n = teapot_wait_listen(listen_sock, 250);
+            if (server->stop)
+                break;
+            if (n <= 0)
+                continue;
             stb_teapot_socket_t client = teapot_listener_accept(listen_sock);
             if (!teapot_socket_ok(client))
                 continue;
             teapot_handle_client_connection(server, client);
         }
 
+        teapot_listener_close(listen_sock);
         return 0;
     }
 #endif // STB_TEAPOT_IMPLEMENTATION

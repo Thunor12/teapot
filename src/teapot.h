@@ -30,6 +30,7 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <signal.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -292,12 +293,18 @@ extern "C"
         int port;
         const teapot_route *routes;
         size_t route_count;
+        const char *bind_host;
+        int backlog;
+        volatile sig_atomic_t stop;
+        void *user;
+        int max_conns;
     } teapot_server;
 
     // =====================================================
     // 🧠 API
     // =====================================================
     int teapot_listen(teapot_server *server);
+    void teapot_request_stop(teapot_server *server);
     int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock);
     stb_teapot_socket_t teapot_listener_accept(stb_teapot_socket_t listen_sock);
     void teapot_close(stb_teapot_socket_t s);
