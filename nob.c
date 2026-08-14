@@ -25,7 +25,7 @@
 #ifdef _WIN32
 #define LINK_FLAGS "-O2", "-lws2_32"
 #else
-#define LINK_FLAGS "-O2"
+#define LINK_FLAGS "-O2", "-pthread"
 #endif
 
 Nob_Procs procs = {0};

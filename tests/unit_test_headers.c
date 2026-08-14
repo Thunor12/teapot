@@ -74,12 +74,12 @@ static void test_trim_spaces(void)
     free(buf);
 }
 
-static void test_crlf_and_lf(void)
+static void test_crlf_lines(void)
 {
     tp_headers h = {0};
-    char *buf = mkbuf("A:1\r\nB:2\n\n");
-    tp_extract_header_keyval(&h, buf, strlen(buf));
-    ok("crlf/lf -> 2 headers", h.count == 2);
+    char *buf = mkbuf("A:1\r\nB:2\r\n");
+    ok("crlf extract ok", tp_extract_header_keyval(&h, buf, strlen(buf)) == 0);
+    ok("crlf -> 2 headers", h.count == 2);
     const tp_header_line *a = get_line(&h, 0);
     const tp_header_line *b = get_line(&h, 1);
     ok("A==1", a && a->value.items && strcmp(a->value.items, "1") == 0);
@@ -102,26 +102,20 @@ static void test_repeated_headers(void)
     free(buf);
 }
 
-static void test_no_colon_ignored(void)
+static void test_no_colon_is_error(void)
 {
     tp_headers h = {0};
     char *buf = mkbuf("NoColonLine\r\nX: y\r\n");
-    tp_extract_header_keyval(&h, buf, strlen(buf));
-    ok("no-colon ignored -> 1 header", h.count == 1);
-    const tp_header_line *hl = get_line(&h, 0);
-    ok("X==y", hl && hl->value.items && strcmp(hl->value.items, "y") == 0);
+    ok("no-colon returns error", tp_extract_header_keyval(&h, buf, strlen(buf)) != 0);
     tp_headers_free(&h);
     free(buf);
 }
 
-static void test_empty_name_ignored(void)
+static void test_empty_name_is_error(void)
 {
     tp_headers h = {0};
     char *buf = mkbuf(": value\r\nGood: v\r\n");
-    tp_extract_header_keyval(&h, buf, strlen(buf));
-    ok("empty name ignored -> 1 header", h.count == 1);
-    const tp_header_line *hl = get_line(&h, 0);
-    ok("Good==v", hl && hl->name.items && strcmp(hl->name.items, "Good") == 0 && hl->value.items && strcmp(hl->value.items, "v") == 0);
+    ok("empty name returns error", tp_extract_header_keyval(&h, buf, strlen(buf)) != 0);
     tp_headers_free(&h);
     free(buf);
 }
@@ -154,7 +148,7 @@ static void test_clamping(void)
     char *buf = malloc(buflen + 1);
     snprintf(buf, buflen + 1, "%s: %s\r\n", long_name, long_val);
 
-    tp_extract_header_keyval(&h, buf, strlen(buf));
+    ok("oversize returns error", tp_extract_header_keyval(&h, buf, strlen(buf)) != 0);
     ok("oversize rejected -> 0 headers", h.count == 0);
 
     tp_headers_free(&h);
@@ -186,10 +180,10 @@ int main(void)
     test_empty();
     test_simple();
     test_trim_spaces();
-    test_crlf_and_lf();
+    test_crlf_lines();
     test_repeated_headers();
-    test_no_colon_ignored();
-    test_empty_name_ignored();
+    test_no_colon_is_error();
+    test_empty_name_is_error();
     test_clamping();
     test_headers_check();
 

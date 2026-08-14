@@ -214,7 +214,6 @@ extern "C"
         tp_string_builder body;
         tp_headers headers;
         size_t body_length;
-        size_t content_length; /* from Content-Length, 0 if absent */
     } teapot_request;
 
     typedef struct
@@ -282,7 +281,7 @@ extern "C"
         teapot_method method;
         const char *path;
         teapot_handler handler;
-        int prefix; /* 0 = exact match (zero-init keeps current call sites working) */
+        int prefix; /* 1 = path prefix; route path must end in '/' */
     } teapot_route;
 
     typedef struct
@@ -480,51 +479,61 @@ extern "C"
         return 1;
     }
 
-    void tp_extract_header_keyval(tp_headers *headers_parsed, const char *raw_header, size_t header_size)
+    static const char *tp_find_crlf(const char *buf, size_t n)
     {
-        if (headers_parsed == NULL || raw_header == NULL || header_size == 0)
+        const char *end = buf + n;
+        while (buf < end)
         {
-            return;
+            const char *p = (const char *)memchr(buf, '\r', (size_t)(end - buf));
+            if (!p || p + 1 >= end)
+                return NULL;
+            if (p[1] == '\n')
+                return p;
+            buf = p + 1;
         }
+        return NULL;
+    }
 
-        /* optional global clamp if defined */
+    /* 1 = blank line ended the block, 0 = buffer ended, -1 = bad line. */
+    static int tp_parse_header_block(tp_headers *h, const char *raw, size_t n, size_t *out_consumed)
+    {
+        size_t i = 0;
+        while (i < n)
+        {
+            if (i + 1 < n && raw[i] == '\r' && raw[i + 1] == '\n')
+            {
+                *out_consumed = i + 2;
+                return 1;
+            }
+            const char *eol = tp_find_crlf(raw + i, n - i);
+            if (!eol)
+                return -1;
+            size_t linelen = (size_t)(eol - (raw + i));
+            if (tp_parse_and_append_header_line(h, raw + i, linelen) != 1)
+                return -1;
+            i = (size_t)(eol - raw) + 2;
+        }
+        *out_consumed = i;
+        return 0;
+    }
+
+    int tp_extract_header_keyval(tp_headers *headers_parsed, const char *raw_header, size_t header_size)
+    {
+        if (headers_parsed == NULL || raw_header == NULL)
+            return -1;
+        if (header_size == 0)
+            return 0;
+
 #ifdef TP_MAX_HEADER_TOTAL
         if (header_size > (size_t)TP_MAX_HEADER_TOTAL)
             header_size = (size_t)TP_MAX_HEADER_TOTAL;
 #endif
 
-        /* scan line by line and use helper to parse each non-empty line */
-        size_t i = 0;
-        while (i < header_size)
-        {
-            size_t line_start = i;
-            size_t line_end = line_start;
-
-            // find end of line
-            while ((line_end < header_size) && (raw_header[line_end] != '\r') && (raw_header[line_end] != '\n'))
-            {
-                ++line_end;
-            }
-
-            // extract line
-            size_t linelen = (line_end > line_start) ? (size_t)(line_end - line_start) : 0;
-            if (linelen > 0)
-            {
-                tp_parse_and_append_header_line(headers_parsed, raw_header + line_start, linelen);
-            }
-
-            /* advance past CR/LF */
-            i = line_end;
-            if (i < header_size && raw_header[i] == '\r')
-            {
-                ++i;
-            }
-
-            if (i < header_size && raw_header[i] == '\n')
-            {
-                ++i;
-            }
-        }
+        size_t consumed = 0;
+        if (tp_parse_header_block(headers_parsed, raw_header, header_size, &consumed) < 0)
+            return -1;
+        (void)consumed;
+        return 0;
     }
 
     const tp_string_builder *tp_headers_get(const tp_headers *h, const char *name)
@@ -634,23 +643,6 @@ extern "C"
         return TEAPOT_UNKNOWN;
     }
 
-    static const char *tp_find_bytes(const char *buf, size_t n, const char *pat, size_t patn)
-    {
-        if (buf == NULL || pat == NULL || patn == 0 || n < patn)
-            return NULL;
-        const char *end = buf + n;
-        while (buf + patn <= end)
-        {
-            const char *p = (const char *)memchr(buf, pat[0], (size_t)(end - buf));
-            if (!p || p + patn > end)
-                return NULL;
-            if (memcmp(p, pat, patn) == 0)
-                return p;
-            buf = p + 1;
-        }
-        return NULL;
-    }
-
     static int teapot_content_length_from_headers(const tp_headers *h, size_t *out_length)
     {
         const tp_string_builder *val = tp_headers_get(h, "Content-Length");
@@ -676,23 +668,22 @@ extern "C"
         tp_headers_free(&req->headers);
     }
 
-    static int parse_request(char *buffer, size_t size, teapot_request *req)
+    static int parse_request(char *buffer, size_t size, teapot_request *req, size_t *out_content_length)
     {
-        if (buffer == NULL || size == 0 || req == NULL)
+        if (buffer == NULL || size == 0 || req == NULL || out_content_length == NULL)
             return -1;
 
         req->path = (tp_string_builder){0};
         req->body = (tp_string_builder){0};
         req->headers = (tp_headers){0};
         req->body_length = 0;
-        req->content_length = 0;
+        *out_content_length = 0;
 
-        const char *header_end = tp_find_bytes(buffer, size, "\r\n\r\n", 4);
-        const char *request_line_end = tp_find_bytes(buffer, size, "\r\n", 2);
-        if (header_end == NULL || request_line_end == NULL || request_line_end > header_end)
+        const char *line_end = tp_find_crlf(buffer, size);
+        if (!line_end)
             return -1;
 
-        size_t line_n = (size_t)(request_line_end - buffer);
+        size_t line_n = (size_t)(line_end - buffer);
         const char *sp1 = (const char *)memchr(buffer, ' ', line_n);
         if (!sp1)
             return -1;
@@ -701,7 +692,7 @@ extern "C"
             return -1;
 
         const char *path0 = sp1 + 1;
-        size_t rest = (size_t)(request_line_end - path0);
+        size_t rest = (size_t)(line_end - path0);
         const char *sp2 = (const char *)memchr(path0, ' ', rest);
         if (!sp2)
             return -1;
@@ -709,39 +700,42 @@ extern "C"
         if (path_n == 0)
             return -1;
 
-        const char *headers_start = request_line_end + 2;
-        size_t header_size = header_end > headers_start ? (size_t)(header_end - headers_start) : 0;
-        tp_extract_header_keyval(&req->headers, headers_start, header_size);
+        size_t line_end_off = (size_t)(line_end - buffer);
+        if (line_end_off + 2 > size)
+            return -1;
+        size_t i = line_end_off + 2;
+        size_t consumed = 0;
+        if (tp_parse_header_block(&req->headers, buffer + i, size - i, &consumed) != 1)
+            return -1;
+        i += consumed;
 
         size_t content_length = 0;
         if (teapot_content_length_from_headers(&req->headers, &content_length) != 0)
             return -1;
 
-        const char *body_start = header_end + 4;
-        size_t body_available = 0;
-        if (size > (size_t)(body_start - buffer))
-            body_available = size - (size_t)(body_start - buffer);
+        const char *body_start = buffer + i;
+        size_t body_available = size > i ? size - i : 0;
         size_t to_append = content_length < body_available ? content_length : body_available;
 
         req->method = method;
-        req->content_length = content_length;
         tp_sb_append_buf(&req->path, path0, path_n);
         tp_sb_append_null(&req->path);
         tp_sb_append_buf(&req->body, body_start, to_append);
         tp_sb_append_null(&req->body);
         req->body_length = to_append;
+        *out_content_length = content_length;
         return 0;
     }
 
-    static int teapot_complete_request_body(stb_teapot_socket_t client, teapot_request *req)
+    static int teapot_complete_request_body(stb_teapot_socket_t client, teapot_request *req, size_t content_length)
     {
-        if (req->body_length >= req->content_length)
+        if (req->body_length >= content_length)
             return 0;
         req->body.count = req->body_length;
-        while (req->body_length < req->content_length)
+        while (req->body_length < content_length)
         {
             char read_buf[4096];
-            size_t to_read = req->content_length - req->body_length;
+            size_t to_read = content_length - req->body_length;
             if (to_read > sizeof(read_buf))
                 to_read = sizeof(read_buf);
             int n = teapot_read(client, read_buf, (int)to_read);
@@ -776,7 +770,7 @@ extern "C"
             if (r->prefix)
             {
                 size_t n = strlen(r->path);
-                if (strncmp(r->path, req->path.items, n) == 0)
+                if (n > 0 && r->path[n - 1] == '/' && strncmp(r->path, req->path.items, n) == 0)
                     return r->handler;
             }
             else if (strcmp(r->path, req->path.items) == 0)
@@ -905,14 +899,15 @@ extern "C"
             return -1;
 
         teapot_request req = {0};
-        if (parse_request(buffer, (size_t)received, &req) < 0)
+        size_t content_length = 0;
+        if (parse_request(buffer, (size_t)received, &req, &content_length) < 0)
         {
             free_request(&req);
             teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
             return -1;
         }
 
-        if (teapot_complete_request_body(client, &req) != 0)
+        if (teapot_complete_request_body(client, &req, content_length) != 0)
         {
             free_request(&req);
             teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
@@ -957,7 +952,7 @@ extern "C"
         while (1)
         {
             stb_teapot_socket_t client = teapot_listener_accept(listen_sock);
-            if ((int)client < 0)
+            if (!teapot_socket_ok(client))
                 continue;
             teapot_handle_client_connection(server, client);
         }
