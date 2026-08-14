@@ -179,6 +179,33 @@ static void test_method_prefix_rejected(void)
     ok("method prefix response is 400", strstr(response, "HTTP/1.1 400 Bad Request") != NULL);
 }
 
+static void test_prefix_route_matches_subpath(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/api/", recording_handler, 1},
+    };
+
+    reset_observed();
+    int rc = exchange_request("GET /api/users HTTP/1.1\r\n\r\n", routes, 1, response, sizeof(response));
+    ok("prefix request succeeds", rc == 0);
+    ok("prefix reaches handler", handler_called == 1);
+}
+
+static void test_exact_route_does_not_act_as_glob(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/api/", recording_handler, 0},
+    };
+
+    reset_observed();
+    int rc = exchange_request("GET /api/users HTTP/1.1\r\n\r\n", routes, 1, response, sizeof(response));
+    ok("exact miss is 404", strstr(response, "HTTP/1.1 404") != NULL);
+    ok("exact miss does not reach handler", handler_called == 0);
+    (void)rc;
+}
+
 int main(void)
 {
     printf("Running request unit tests...\n\n");
@@ -187,6 +214,8 @@ int main(void)
     test_incomplete_body_rejected_before_handler();
     test_oversized_body_rejected_before_handler();
     test_method_prefix_rejected();
+    test_prefix_route_matches_subpath();
+    test_exact_route_does_not_act_as_glob();
 
     if (failures == 0)
     {

@@ -773,16 +773,11 @@ extern "C"
             const teapot_route *r = &server->routes[i];
             if (r->method != req->method)
                 continue;
-            size_t path_len = strlen(r->path);
-            /* Prefix match: path ending with '*' matches any path that starts with the prefix (minus '*') */
-            if (path_len > 0 && r->path[path_len - 1] == '*')
+            if (r->prefix)
             {
-                size_t prefix_len = path_len - 1;
-                if (strncmp(r->path, req->path.items, prefix_len) == 0 &&
-                    (req->path.items[prefix_len] == '\0' || req->path.items[prefix_len] == '/' || req->path.items[prefix_len] == '?'))
-                {
+                size_t n = strlen(r->path);
+                if (strncmp(r->path, req->path.items, n) == 0)
                     return r->handler;
-                }
             }
             else if (strcmp(r->path, req->path.items) == 0)
             {
