@@ -43,7 +43,8 @@
         <li>Wire order: status → Content-Type → Content-Length → Connection: close → extras → body</li>
       </ul>
 <pre><code>teapot_response r = teapot_html(TEAPOT_HTTP_OK, "&lt;p&gt;hi&lt;/p&gt;");
-teapot_response_header(&amp;r, "HX-Trigger", "teapot:flash");
+teapot_response_header(&amp;r, "HX-Trigger",
+    "{\"teapot:flash\":{\"target\":\"#status-line\"}}");
 return r;</code></pre>
     </section>
 
@@ -54,7 +55,7 @@ return r;</code></pre>
       <!-- Task 4 targets:
            #frag-get-demo   ← hx-get="/frag/ping" (or responses GET toy)
            #frag-post-demo  ← hx-post="/frag/echo-toy" (side-effect free)
-           #status-line     ← HX-Trigger teapot:flash (accent flash, not a toast)
+           #status-line     ← HX-Trigger {"teapot:flash":{"target":"#status-line"}}
       -->
       <div class="frag-toy">
         <h3>GET swap</h3>
