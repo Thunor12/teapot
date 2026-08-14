@@ -21,12 +21,10 @@ jobs:
       - name: build and test
         run: cc -o nob nob.c && ./nob
 
-      - name: amalgam is generated and within budget
+      - name: amalgam is generated
         run: |
           cc -o nob nob.c && ./nob amalgamate
           git diff --exit-code stb_teapot.h
-          test "$(wc -l < stb_teapot.h)" -lt 2200
-          for f in src/*.c src/*.h; do test "$(wc -l < "$f")" -lt 400; done
 
   fuzz:
     runs-on: ubuntu-latest

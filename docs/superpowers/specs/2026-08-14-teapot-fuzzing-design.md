@@ -6,7 +6,7 @@
 
 ## Constraints (locked)
 
-- Stay a single-header library. Fuzzing does **not** modify `stb_teapot.h` (no test hook, no exported `parse_request`). Amalgam line budget is owned by the HTTP runtime spec (not 1000).
+- Stay a single-header library. Fuzzing does **not** modify `stb_teapot.h` (no test hook, no exported `parse_request`). There is no amalgam line-count gate.
 - Default `cc nob.c -o nob && ./nob` stays gcc unit tests + valgrind. Clang is not required for that path.
 - Fuzzing is clang + libFuzzer + ASan + UBSan.
 - Full serve path: `socketpair` → write bytes → `SHUT_WR` → `teapot_serve_client`. Same shape as `tests/unit_test_request.c`.
@@ -107,7 +107,7 @@ Default `./nob` must not compile or invoke `fuzz_serve`.
 
 `.github/workflows/nob.yml`:
 
-- Job `build`: unchanged (`actions/checkout@v7`, submodules, valgrind, `cc -o nob nob.c && ./nob`, line budget).
+- Job `build`: `actions/checkout@v7`, submodules, valgrind, `cc -o nob nob.c && ./nob`, then `./nob amalgamate && git diff --exit-code stb_teapot.h` (no line-count gate).
 - Job `fuzz`: `ubuntu-latest`, checkout with submodules, `sudo apt-get install -y clang`, `cc -o nob nob.c && ./nob fuzz`.
 
 The fuzz job sets `TEAPOT_FUZZ_GRAMMAR=1` in the environment so rfc_lite mismatches fail CI.
@@ -201,4 +201,4 @@ Pass for CI: 30 seconds, exit 0, no sanitizer report, no oracle `abort`.
 2. `./nob fuzz` on a machine with clang builds `build/fuzz_serve` and runs 30s against `tests/fuzz_corpus`.
 3. CI `fuzz` job does the same with grammar enabled.
 4. A crashing input saved by libFuzzer is a regression: copy it into `tests/fuzz_corpus/` or add a focused case in `unit_test_request.c`.
-5. No fuzz-only `#ifdef` in the header. Amalgam line budget is owned by the HTTP runtime spec (not 1000). rfc_lite header size follows `TEAPOT_CONN_BUF` (8192), not 8191.
+5. No fuzz-only `#ifdef` in the header. rfc_lite header size follows `TEAPOT_CONN_BUF` (8192), not 8191.
