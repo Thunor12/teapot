@@ -364,6 +364,20 @@ static void test_exact_route_does_not_act_as_glob(void)
     (void)rc;
 }
 
+static void test_request_line_extra_spaces_still_routes(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/hello", recording_handler},
+    };
+
+    reset_observed();
+    int rc = exchange_request("GET  /hello  HTTP/1.1\r\n\r\n", routes, 1, response, sizeof(response));
+    ok("extra spaces request succeeds", rc == 0);
+    ok("extra spaces reaches handler", handler_called == 1);
+    ok("extra spaces response is 200", strstr(response, "HTTP/1.1 200 OK") != NULL);
+}
+
 int main(void)
 {
     printf("Running request unit tests...\n\n");
@@ -378,6 +392,7 @@ int main(void)
     test_prefix_route_matches_subpath();
     test_prefix_without_slash_does_not_match_extension();
     test_exact_route_does_not_act_as_glob();
+    test_request_line_extra_spaces_still_routes();
 
     if (failures == 0)
     {

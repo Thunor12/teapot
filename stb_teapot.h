@@ -630,6 +630,13 @@ extern "C"
         return 0;
     }
 
+    static const char *tp_skip_spaces(const char *p, const char *end)
+    {
+        while (p < end && *p == ' ')
+            ++p;
+        return p;
+    }
+
     static teapot_method parse_method(const char *s, size_t n)
     {
         if (n == 3 && memcmp(s, "GET", 3) == 0)
@@ -691,9 +698,10 @@ extern "C"
         if (method == TEAPOT_UNKNOWN)
             return -1;
 
-        const char *path0 = sp1 + 1;
-        size_t rest = (size_t)(line_end - path0);
-        const char *sp2 = (const char *)memchr(path0, ' ', rest);
+        const char *path0 = tp_skip_spaces(sp1 + 1, line_end);
+        if (path0 >= line_end)
+            return -1;
+        const char *sp2 = (const char *)memchr(path0, ' ', (size_t)(line_end - path0));
         if (!sp2)
             return -1;
         size_t path_n = (size_t)(sp2 - path0);
