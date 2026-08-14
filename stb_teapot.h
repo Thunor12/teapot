@@ -407,7 +407,7 @@ extern "C"
         struct timespec ts;
         if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
             return 0;
-        return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
+        return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
 #endif
     }
 
