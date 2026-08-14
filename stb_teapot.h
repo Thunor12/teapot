@@ -586,15 +586,30 @@ extern "C"
     static int teapot_write(stb_teapot_socket_t s, const char *buf, int len)
     {
         if (len <= 0)
-        {
             return 0;
-        }
-
 #ifdef _WIN32
         return send(s, buf, len, 0);
 #else
-        return (int)write(s, buf, (size_t)len);
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
 #endif
+        return (int)send(s, buf, (size_t)len, MSG_NOSIGNAL);
+#endif
+    }
+
+    static int teapot_write_all(stb_teapot_socket_t s, const char *buf, size_t len)
+    {
+        size_t total = 0;
+        while (total < len)
+        {
+            size_t remaining = len - total;
+            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = teapot_write(s, buf + total, chunk);
+            if (n <= 0)
+                return -1;
+            total += (size_t)n;
+        }
+        return 0;
     }
 
     static teapot_method parse_method(const char *s, size_t n)
@@ -852,29 +867,24 @@ extern "C"
 
     int teapot_send_response(stb_teapot_socket_t client, const teapot_response *resp)
     {
-        if (!teapot_socket_ok((stb_teapot_socket_t)client) || !resp)
+        if (!teapot_socket_ok(client) || !resp)
             return -1;
 
-        char header[256] = {0};
         const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        int header_len = snprintf(
-            header, sizeof(header),
-            "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
-            resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        if (teapot_write((stb_teapot_socket_t)client, header, header_len) < 0)
-        {
+        if (strpbrk(ct, "\r\n") != NULL)
             return -1;
-        }
 
-        if (resp->body.count > 0)
-        {
-            if (teapot_write((stb_teapot_socket_t)client, resp->body.items, (int)resp->body.count) < 0)
-            {
-                return -1;
-            }
-        }
-        return 0;
+        tp_string_builder header = {0};
+        tp_sb_appendf(&header,
+                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+                      resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+
+        int rc = teapot_write_all(client, header.items, header.count);
+        if (rc == 0 && resp->body.count > 0)
+            rc = teapot_write_all(client, resp->body.items, resp->body.count);
+
+        tp_sb_free(header);
+        return rc;
     }
 
     int teapot_handle_client_connection(teapot_server *server, stb_teapot_socket_t client)
