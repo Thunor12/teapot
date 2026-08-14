@@ -263,14 +263,33 @@ extern "C"
     typedef struct
     {
         int status;
-        const char *content_type; /* NULL => "text/plain" */
+        const char *content_type; /* borrowed; NULL => "text/plain"; must outlive send */
+        tp_headers headers;       /* owned extra headers */
         tp_string_builder body;
     } teapot_response;
+
+    static inline void tp_headers_free(tp_headers *h)
+    {
+        if (h == NULL)
+            return;
+        for (size_t i = 0; i < h->count; ++i)
+        {
+            tp_sb_free(h->items[i].name);
+            tp_sb_free(h->items[i].value);
+        }
+        TP_FREE(h->items);
+        h->items = NULL;
+        h->count = 0;
+        h->capacity = 0;
+    }
 
     static inline void teapot_response_init(teapot_response *res, int status)
     {
         res->status = status;
         res->content_type = NULL;
+        res->headers.items = NULL;
+        res->headers.count = 0;
+        res->headers.capacity = 0;
         res->body.items = NULL;
         res->body.count = 0;
         res->body.capacity = 0;
@@ -288,25 +307,18 @@ extern "C"
 
     static inline void teapot_response_free(teapot_response *res)
     {
+        if (res == NULL)
+            return;
+        tp_headers_free(&res->headers);
         tp_sb_free(res->body);
+        res->status = 0;
+        res->content_type = NULL;
+        res->headers.items = NULL;
+        res->headers.count = 0;
+        res->headers.capacity = 0;
         res->body.items = NULL;
         res->body.count = 0;
         res->body.capacity = 0;
-    }
-
-    static inline void tp_headers_free(tp_headers *h)
-    {
-        if (h == NULL)
-            return;
-        for (size_t i = 0; i < h->count; ++i)
-        {
-            tp_sb_free(h->items[i].name);
-            tp_sb_free(h->items[i].value);
-        }
-        TP_FREE(h->items);
-        h->items = NULL;
-        h->count = 0;
-        h->capacity = 0;
     }
 
     /* Find a header value (case-insensitive). Returns pointer to the value string-builder, or NULL if not found */
@@ -355,6 +367,9 @@ extern "C"
     teapot_response teapot_text(int status, const char *s);
     teapot_response teapot_json(int status, const char *json);
     teapot_response teapot_bytes(int status, const char *ctype, const void *p, size_t n);
+    teapot_response teapot_html(int status, const char *html);
+    int teapot_response_header(teapot_response *r, const char *name, const char *value);
+    int teapot_response_headerf(teapot_response *r, const char *name, const char *fmt, ...);
     /* parse, complete body, route, send. Does NOT close client. */
     int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client);
     /* teapot_serve_client + teapot_close. Takes ownership of client. */

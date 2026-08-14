@@ -100,14 +100,10 @@
         c->req.user = c->server->user;
         teapot_handler handler = teapot_find_handler(c->server, &c->req);
         teapot_response_free(&c->res);
-        teapot_response_init(&c->res, TEAPOT_HTTP_OK);
         if (handler)
             c->res = handler(&c->req);
         else
-        {
-            c->res.status = TEAPOT_HTTP_NOT_FOUND;
-            tp_sb_appendf(&c->res.body, "404 Not Found\n");
-        }
+            c->res = teapot_text(TEAPOT_HTTP_NOT_FOUND, "404 Not Found\n");
 
         tp_sb_free(c->out);
         c->out = (tp_string_builder){0};
