@@ -198,6 +198,15 @@
         return p;
     }
 
+    /* Route matching uses the request-target up to the first '?'. */
+    static size_t tp_request_target_path_n(const char *target)
+    {
+        if (!target)
+            return 0;
+        const char *q = strchr(target, '?');
+        return q ? (size_t)(q - target) : strlen(target);
+    }
+
     static teapot_method parse_method(const char *s, size_t n)
     {
         if (n == 3 && memcmp(s, "GET", 3) == 0)

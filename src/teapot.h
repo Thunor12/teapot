@@ -218,6 +218,7 @@ extern "C"
         tp_string_builder body;
         tp_headers headers;
         size_t body_length;
+        void *user;
     } teapot_request;
 
     typedef struct
@@ -311,6 +312,9 @@ extern "C"
     void teapot_listener_close(stb_teapot_socket_t listen_sock);
     int teapot_recv_request(stb_teapot_socket_t client, char *buffer, int bufsize, int *out_received);
     int teapot_send_response(stb_teapot_socket_t client, const teapot_response *resp);
+    teapot_response teapot_text(int status, const char *s);
+    teapot_response teapot_json(int status, const char *json);
+    teapot_response teapot_bytes(int status, const char *ctype, const void *p, size_t n);
     /* parse, complete body, route, send. Does NOT close client. */
     int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client);
     /* teapot_serve_client + teapot_close. Takes ownership of client. */

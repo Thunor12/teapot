@@ -3,6 +3,12 @@
 
 #include "../stb_teapot.h"
 
+static teapot_response ping_handler(const teapot_request *req)
+{
+    (void)req;
+    return teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
+}
+
 static teapot_response hello_handler(const teapot_request *req)
 {
     teapot_response resp;

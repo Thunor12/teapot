@@ -21,6 +21,7 @@ static int failures = 0;
 static int handler_called = 0;
 static size_t observed_body_length = 0;
 static char observed_body[128];
+static void *observed_user = NULL;
 
 static void ok(const char *name, int cond)
 {
@@ -37,6 +38,7 @@ static void reset_observed(void)
 {
     handler_called = 0;
     observed_body_length = 0;
+    observed_user = NULL;
     memset(observed_body, 0, sizeof(observed_body));
 }
 
@@ -46,6 +48,7 @@ static teapot_response recording_handler(const teapot_request *req)
     teapot_response_init(&resp, TEAPOT_HTTP_OK);
 
     handler_called = 1;
+    observed_user = req->user;
     observed_body_length = req->body_length;
     if (req->body.items != NULL)
     {
@@ -423,6 +426,62 @@ static void test_duplicate_content_length_identical_ok(void)
     ok("dup CL identical body length", observed_body_length == 3);
 }
 
+static void test_query_string_matches_exact_route(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/hello", recording_handler},
+    };
+
+    reset_observed();
+    int rc = exchange_request("GET /hello?x=1 HTTP/1.1\r\n\r\n", routes, 1, response, sizeof(response));
+    ok("query request succeeds", rc == 0);
+    ok("query reaches handler", handler_called == 1);
+    ok("query response is 200", strstr(response, "HTTP/1.1 200") != NULL);
+}
+
+static void test_request_user_copied_from_server(void)
+{
+    stb_teapot_socket_t sockets[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
+    {
+        ok("user socketpair", 0);
+        return;
+    }
+
+    const char *raw = "GET /hello?x=1 HTTP/1.1\r\n\r\n";
+    if (write_all_raw(sockets[1], raw, strlen(raw)) != 0)
+    {
+        ok("user wrote request", 0);
+        teapot_close(sockets[0]);
+        teapot_close(sockets[1]);
+        return;
+    }
+    shutdown(sockets[1], SHUT_WR);
+
+    static int marker;
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/hello", recording_handler},
+    };
+    teapot_server server = {
+        .port = 0,
+        .routes = routes,
+        .route_count = 1,
+        .user = &marker,
+    };
+
+    reset_observed();
+    int rc = teapot_handle_client_connection(&server, sockets[0]);
+    char response[512];
+    (void)read_all(sockets[1], response, sizeof(response));
+    teapot_close(sockets[1]);
+
+    ok("user request succeeds", rc == 0);
+    ok("user reaches handler", handler_called == 1);
+    ok("user response is 200", strstr(response, "HTTP/1.1 200") != NULL);
+    ok("request user copied from server", observed_user == &marker);
+}
+
 static void test_pipelined_leftover_rejected(void)
 {
     char response[512];
@@ -455,6 +514,8 @@ int main(void)
     test_transfer_encoding_rejected();
     test_duplicate_content_length_mismatch_rejected();
     test_duplicate_content_length_identical_ok();
+    test_query_string_matches_exact_route();
+    test_request_user_copied_from_server();
     test_pipelined_leftover_rejected();
 
     if (failures == 0)

@@ -86,20 +86,52 @@
         teapot_response_free(&resp);
     }
 
+    teapot_response teapot_text(int status, const char *s)
+    {
+        teapot_response r;
+        teapot_response_init(&r, status);
+        r.content_type = "text/plain";
+        if (s)
+            teapot_response_write(&r, s, strlen(s));
+        return r;
+    }
+
+    teapot_response teapot_json(int status, const char *json)
+    {
+        teapot_response r;
+        teapot_response_init(&r, status);
+        r.content_type = "application/json";
+        if (json)
+            teapot_response_write(&r, json, strlen(json));
+        return r;
+    }
+
+    teapot_response teapot_bytes(int status, const char *ctype, const void *p, size_t n)
+    {
+        teapot_response r;
+        teapot_response_init(&r, status);
+        r.content_type = ctype ? ctype : "text/plain";
+        if (p && n > 0)
+            teapot_response_write(&r, p, n);
+        return r;
+    }
+
     static teapot_handler teapot_find_handler(teapot_server *server, teapot_request *req)
     {
+        const char *target = req->path.items ? req->path.items : "";
+        size_t path_n = tp_request_target_path_n(target);
         for (size_t i = 0; i < server->route_count; i++)
         {
             const teapot_route *r = &server->routes[i];
             if (r->method != req->method)
                 continue;
+            size_t n = strlen(r->path);
             if (r->prefix)
             {
-                size_t n = strlen(r->path);
-                if (n > 0 && r->path[n - 1] == '/' && strncmp(r->path, req->path.items, n) == 0)
+                if (n > 0 && r->path[n - 1] == '/' && path_n >= n && memcmp(r->path, target, n) == 0)
                     return r->handler;
             }
-            else if (strcmp(r->path, req->path.items) == 0)
+            else if (n == path_n && memcmp(r->path, target, n) == 0)
             {
                 return r->handler;
             }
@@ -191,6 +223,7 @@
             return -1;
         }
 
+        req.user = server->user;
         teapot_handler handler = teapot_find_handler(server, &req);
         teapot_response resp;
         teapot_response_init(&resp, TEAPOT_HTTP_OK);

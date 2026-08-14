@@ -16,6 +16,7 @@ static void on_sigint(int sig)
 int main(void)
 {
     teapot_route routes[] = {
+        {TEAPOT_GET, "/ping", ping_handler},
         {TEAPOT_GET, "/hello", hello_handler},
         {TEAPOT_POST, "/echo", echo_handler},
     };
@@ -30,6 +31,7 @@ int main(void)
     (void)signal(SIGINT, on_sigint);
 
     printf("Starting stb_teapot...\n");
+    printf("  GET  -> http://127.0.0.1:8080/ping\n");
     printf("  GET  -> http://127.0.0.1:8080/hello\n");
     printf("  POST -> http://127.0.0.1:8080/echo\n");
     printf("\nPress Ctrl+C to stop.\n\n");

@@ -95,11 +95,41 @@ static void test_rejects_response_header_injection(void)
     teapot_close(sockets[1]);
 }
 
+static void test_teapot_json_sets_ctype_and_body(void)
+{
+    teapot_response r = teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
+    ok("json ctype", r.content_type && strcmp(r.content_type, "application/json") == 0);
+    ok("json body", r.body.count == 11 && memcmp(r.body.items, "{\"ok\":true}", 11) == 0);
+    teapot_response_free(&r);
+}
+
+static void test_teapot_text_sets_ctype_and_body(void)
+{
+    teapot_response r = teapot_text(TEAPOT_HTTP_OK, "hello");
+    ok("text ctype", r.content_type && strcmp(r.content_type, "text/plain") == 0);
+    ok("text body", r.body.count == 5 && memcmp(r.body.items, "hello", 5) == 0);
+    teapot_response_free(&r);
+}
+
+static void test_teapot_bytes_crlf_ctype_rejected_on_send(void)
+{
+    stb_teapot_socket_t sp[2];
+    ok("socketpair", socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0);
+    teapot_response r = teapot_bytes(TEAPOT_HTTP_OK, "a\r\nX: b", "x", 1);
+    ok("send rejects", teapot_send_response(sp[0], &r) == -1);
+    teapot_response_free(&r);
+    teapot_close(sp[0]);
+    teapot_close(sp[1]);
+}
+
 int main(void)
 {
     printf("Running response unit tests...\n\n");
     test_long_content_type_response();
     test_rejects_response_header_injection();
+    test_teapot_json_sets_ctype_and_body();
+    test_teapot_text_sets_ctype_and_body();
+    test_teapot_bytes_crlf_ctype_rejected_on_send();
     if (failures == 0)
     {
         printf("\nALL TESTS PASSED\n");

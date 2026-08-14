@@ -48,6 +48,7 @@ int main(void)
 {
 
     teapot_route routes[] = {
+        {TEAPOT_GET, "/ping", ping_handler},
         {TEAPOT_GET, "/hello", hello_handler},
         {TEAPOT_POST, "/echo", echo_handler},
     };
