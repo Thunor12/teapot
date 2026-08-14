@@ -43,7 +43,7 @@ teapot_response hello_handler(const teapot_request *req)
     teapot_response_init(&resp, 200);
 
     tp_header_line h = {0};
-    int r = tp_headers_check(&req->headers, "X-Hello", NULL, &h);
+    tp_header_result r = tp_headers_check(&req->headers, "X-Hello", NULL, &h);
     if (r != TP_HEADER_NOT_FOUND)
         tp_sb_appendf(&resp.body, "Hello (X-Hello=%s)\n", h.value.items ? h.value.items : "");
     else
@@ -67,7 +67,7 @@ teapot_response echo_handler(const teapot_request *req)
     }
 
     tp_header_line hdr = {0};
-    int res = tp_headers_check(&req->headers, "Content-Type", "text/plain", &hdr);
+    tp_header_result res = tp_headers_check(&req->headers, "Content-Type", "text/plain", &hdr);
     if (res == TP_HEADER_NOT_FOUND)
     {
         resp.status = 400;
@@ -390,10 +390,8 @@ int main(void)
     for (int i = 0; i < WORKER_COUNT; ++i)
         pthread_join(workers[i], NULL);
     free(workers);
-    teapot_close((stb_teapot_socket_t)listen_sock);
 #endif
-
-    teapot_close((stb_teapot_socket_t)listen_sock);
+    teapot_listener_close(listen_sock);
     printf("server stopped\n");
     return 0;
 }

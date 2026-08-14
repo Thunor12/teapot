@@ -569,6 +569,15 @@ extern "C"
 #endif
     }
 
+    /* One listener per process is the supported model on Windows (WSAStartup in listener_open). */
+    void teapot_listener_close(stb_teapot_socket_t listen_sock)
+    {
+        teapot_close(listen_sock);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
+
     static int teapot_read(stb_teapot_socket_t s, char *buf, int len)
     {
         if (len <= 0)
@@ -801,6 +810,9 @@ extern "C"
             return -1;
         }
 
+        int yes = 1;
+        (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+
         struct sockaddr_in addr = {0};
         addr.sin_family = AF_INET;
         addr.sin_port = htons((uint16_t)server->port);
@@ -887,28 +899,21 @@ extern "C"
         return rc;
     }
 
-    int teapot_handle_client_connection(teapot_server *server, stb_teapot_socket_t client)
+    int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client)
     {
-        if (!server || !teapot_socket_ok((stb_teapot_socket_t)client))
-        {
-            teapot_close((stb_teapot_socket_t)client);
+        if (!server || !teapot_socket_ok(client))
             return -1;
-        }
 
         char buffer[8192] = {0};
         int received = 0;
         if (teapot_recv_request(client, buffer, (int)sizeof(buffer), &received) < 0)
-        {
-            teapot_close((stb_teapot_socket_t)client);
             return -1;
-        }
 
         teapot_request req = {0};
         if (parse_request(buffer, (size_t)received, &req) < 0)
         {
             free_request(&req);
             teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
-            teapot_close((stb_teapot_socket_t)client);
             return -1;
         }
 
@@ -916,18 +921,14 @@ extern "C"
         {
             free_request(&req);
             teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
-            teapot_close((stb_teapot_socket_t)client);
             return -1;
         }
 
         teapot_handler handler = teapot_find_handler(server, &req);
         teapot_response resp;
         teapot_response_init(&resp, TEAPOT_HTTP_OK);
-
         if (handler)
-        {
             resp = handler(&req);
-        }
         else
         {
             resp.status = TEAPOT_HTTP_NOT_FOUND;
@@ -937,40 +938,35 @@ extern "C"
         int rc = teapot_send_response(client, &resp);
         teapot_response_free(&resp);
         free_request(&req);
-        teapot_close((stb_teapot_socket_t)client);
         return rc;
     }
 
-    // Keep a convenience blocking single-threaded listen that uses the new API
+    int teapot_handle_client_connection(teapot_server *server, stb_teapot_socket_t client)
+    {
+        int rc = teapot_serve_client(server, client);
+        teapot_close(client);
+        return rc;
+    }
+
     int teapot_listen(teapot_server *server)
     {
         if (!server)
-        {
             return 1;
-        }
 
         stb_teapot_socket_t listen_sock;
         if (teapot_listener_open(server, &listen_sock) < 0)
-        {
             return 1;
-        }
 
-        printf("🫖 stb_teapot listening on port %d\n", server->port);
+        printf("stb_teapot listening on port %d\n", server->port);
 
         while (1)
         {
             stb_teapot_socket_t client = teapot_listener_accept(listen_sock);
             if ((int)client < 0)
-            {
                 continue;
-            }
-
-            // simple single-threaded handling (users can accept and dispatch themselves)
             teapot_handle_client_connection(server, client);
         }
 
-        /* unreachable in current API, but keep symmetry */
-        // teapot_close((stb_teapot_socket_t)listen_sock);
         return 0;
     }
 
