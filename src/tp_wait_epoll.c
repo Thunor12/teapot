@@ -1,7 +1,9 @@
 #include "teapot.h"
 
 #if TEAPOT_WAIT == TEAPOT_WAIT_EPOLL
-#ifndef _WIN32
+#ifndef __linux__
+#error "TEAPOT_WAIT_EPOLL requires Linux"
+#else
 
 #include <sys/epoll.h>
 

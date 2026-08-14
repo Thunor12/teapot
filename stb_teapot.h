@@ -1612,7 +1612,9 @@ void tp_wait_destroy(tp_wait *w)
 #endif
 
 #if TEAPOT_WAIT == TEAPOT_WAIT_EPOLL
-#ifndef _WIN32
+#ifndef __linux__
+#error "TEAPOT_WAIT_EPOLL requires Linux"
+#else
 
 #include <sys/epoll.h>
 

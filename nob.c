@@ -99,9 +99,11 @@ const char *tests_and_examples[] = {
     TEST_DIR "unit_test_timeout.c",
     TEST_DIR "unit_test_listen.c",
     TEST_DIR "unit_test_run.c",
+#ifdef __linux__
     TEST_DIR "unit_test_run_epoll.c",
+#endif
     EXAMPLE_DIR "basic_server.c",
-#ifndef _WIN32
+#ifdef __linux__
     EXAMPLE_DIR "epoll_server.c",
 #endif
     EXAMPLE_DIR "threaded_server.c",
@@ -115,7 +117,9 @@ static const char *unit_tests[] = {
     BUILD_DIR "unit_test_timeout",
     BUILD_DIR "unit_test_listen",
     BUILD_DIR "unit_test_run",
+#ifdef __linux__
     BUILD_DIR "unit_test_run_epoll",
+#endif
 };
 
 static int compile_all_exe(const char **exes, size_t test_count)

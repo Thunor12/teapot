@@ -3,13 +3,17 @@
 
 #include <stdio.h>
 
-#ifdef _WIN32
+#if !defined(__linux__)
 int main(void)
 {
-    puts("unit_test_run_epoll is POSIX-only for now");
+    puts("unit_test_run_epoll is Linux-only");
     return 0;
 }
 #else
+#if TEAPOT_WAIT != TEAPOT_WAIT_EPOLL
+#error "unit_test_run_epoll expects TEAPOT_WAIT_EPOLL"
+#endif
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
