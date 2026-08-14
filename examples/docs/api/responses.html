@@ -50,13 +50,8 @@ return r;</code></pre>
 
     <section class="section">
       <h2>Live htmx toys</h2>
-      <p class="muted">Fragments swap into named targets only. Chrome stays outside swap roots. Handlers land in Task 4 (<code>/frag/*</code>).</p>
+      <p class="muted">Fragments swap into named targets only. Chrome stays outside swap roots. Try the <code>/frag/*</code> toys below.</p>
 
-      <!-- Task 4 targets:
-           #frag-get-demo   ← hx-get="/frag/ping" (or responses GET toy)
-           #frag-post-demo  ← hx-post="/frag/echo-toy" (side-effect free)
-           #status-line     ← HX-Trigger {"teapot:flash":{"target":"#status-line"}}
-      -->
       <div class="frag-toy">
         <h3>GET swap</h3>
         <p class="muted">htmx <code>hx-get</code> into <code>#frag-get-demo</code>.</p>
@@ -68,7 +63,7 @@ return r;</code></pre>
             GET /frag/ping
           </button>
         </div>
-        <div id="frag-get-demo" class="frag-target" aria-live="polite">Waiting for Task 4 handler.</div>
+        <div id="frag-get-demo" class="frag-target" aria-live="polite">Fragment landing zone.</div>
       </div>
 
       <div class="frag-toy">
@@ -82,7 +77,7 @@ return r;</code></pre>
             POST /frag/echo-toy
           </button>
         </div>
-        <div id="frag-post-demo" class="frag-target" aria-live="polite">Waiting for Task 4 handler.</div>
+        <div id="frag-post-demo" class="frag-target" aria-live="polite">Fragment landing zone.</div>
       </div>
 
       <div class="frag-toy">

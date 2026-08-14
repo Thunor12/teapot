@@ -76,7 +76,7 @@
     bind();
   }
 
-  /* Task 4: HX-Trigger may dispatch teapot:flash on #status-line / toys */
+  /* HX-Trigger may dispatch teapot:flash on #status-line / toys */
   document.body.addEventListener("teapot:flash", function (ev) {
     var el = ev.target;
     if (!el || !el.classList) return;
