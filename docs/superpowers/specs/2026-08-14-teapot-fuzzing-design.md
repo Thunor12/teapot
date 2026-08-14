@@ -6,7 +6,7 @@
 
 ## Constraints (locked)
 
-- Stay a single-header library. `stb_teapot.h` stays under 1000 lines and is **not** modified for fuzzing (no test hook, no exported `parse_request`).
+- Stay a single-header library. Fuzzing does **not** modify `stb_teapot.h` (no test hook, no exported `parse_request`). Amalgam line budget is owned by the HTTP runtime spec (not 1000).
 - Default `cc nob.c -o nob && ./nob` stays gcc unit tests + valgrind. Clang is not required for that path.
 - Fuzzing is clang + libFuzzer + ASan + UBSan.
 - Full serve path: `socketpair` → write bytes → `SHUT_WR` → `teapot_serve_client`. Same shape as `tests/unit_test_request.c`.
@@ -32,7 +32,7 @@ clang ./nob fuzz   → build/fuzz_serve  (-fsanitize=fuzzer,address,undefined)
 
 `SHUT_WR` is what prevents a huge `Content-Length` from hanging: `teapot_complete_request_body` gets `read == 0` and returns -1. libFuzzer `-timeout=2` is a backstop, not the primary hang control.
 
-The first `teapot_recv_request` still fills at most 8191 bytes. Bytes already in the socket beyond that hit the extra-body read loop. Seeds must cover both “headers+body in the first recv” and “headers in the first recv, body completed from the socket.”
+Headers accumulate into `TEAPOT_CONN_BUF` (8192) with no reserved NUL. A header block that never finds `\r\n\r\n` in 8192 bytes is 400. Body bytes already past the blank line in that buffer count toward `Content-Length`; the rest complete from the socket. Seeds must cover both “headers+body in the first recv” and “headers in the first recv, body completed from the socket.”
 
 ## Components
 
@@ -152,7 +152,7 @@ The buffer is a single request (no pipelining):
    - At most one `Content-Length` header (case-insensitive). Duplicates are not rfc_lite-valid.
    - `NAME` length ≤ `TP_MAX_HEADER_NAME_LEN` (256). `VALUE` length ≤ `TP_MAX_HEADER_VALUE_LEN` (4096). Oversize is a deliberate teapot 400, not a grammar finding.
 3. **End of headers:** a blank line `CRLF`.
-4. **Header block size:** request line + headers + blank line is ≤ 8191 bytes (teapot’s first recv is `sizeof(buffer)-1` on an 8192-byte buffer). Larger “valid HTTP” that never fits in one recv is out of scope for this oracle.
+4. **Header block size:** request line + headers + blank line is ≤ 8192 bytes (`TEAPOT_CONN_BUF`; no forced NUL). Larger “valid HTTP” that never fits in the conn buffer is out of scope for this oracle.
 5. **Body:**
    - If `Content-Length` is absent, there are no extra bytes after the blank line (or they are ignored by the checker: extra trailing bytes make the input **invalid** so pipelining does not false-alarm).
    - If present, the value is a base-10 integer with optional trailing spaces, `end` after digits+spaces as `strtoul` would accept, `0 ≤ n ≤ TEAPOT_MAX_BODY_SIZE` (4 MiB). GET with a body is allowed.
@@ -161,7 +161,7 @@ The buffer is a single request (no pipelining):
 
 #### rfc_lite: not valid (teapot 400 is fine)
 
-- Unknown method, HTTP/2, LF-only lines, header folding, empty header name, missing colon, oversize name/value, `Content-Length` over `TEAPOT_MAX_BODY_SIZE`, incomplete body, chunked encoding, pipelining, header block larger than 8191 bytes.
+- Unknown method, HTTP/2, LF-only lines, header folding, empty header name, missing colon, oversize name/value, `Content-Length` over `TEAPOT_MAX_BODY_SIZE`, incomplete body, chunked encoding, pipelining, header block larger than 8192 bytes.
 
 If CI fails because current teapot 400s an rfc_lite-valid seed, that is a **product decision**: either accept that request in `stb_teapot.h` or tighten this grammar. Do not delete the oracle to go green.
 
@@ -201,4 +201,4 @@ Pass for CI: 30 seconds, exit 0, no sanitizer report, no oracle `abort`.
 2. `./nob fuzz` on a machine with clang builds `build/fuzz_serve` and runs 30s against `tests/fuzz_corpus`.
 3. CI `fuzz` job does the same with grammar enabled.
 4. A crashing input saved by libFuzzer is a regression: copy it into `tests/fuzz_corpus/` or add a focused case in `unit_test_request.c`.
-5. `stb_teapot.h` line count stays under 1000 with no fuzz-only `#ifdef` in the header.
+5. No fuzz-only `#ifdef` in the header. Amalgam line budget is owned by the HTTP runtime spec (not 1000). rfc_lite header size follows `TEAPOT_CONN_BUF` (8192), not 8191.

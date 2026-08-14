@@ -222,7 +222,7 @@ static int rfc_lite_is_valid(const uint8_t *data, size_t size)
     if (headers_end == NULL)
         return 0;
 
-    if ((size_t)(headers_end - p) > 8191)
+    if ((size_t)(headers_end - p) > (size_t)TEAPOT_CONN_BUF)
         return 0;
 
     size_t body_n = (size_t)(end - headers_end);

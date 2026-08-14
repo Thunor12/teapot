@@ -1,5 +1,56 @@
 # Teapot
-A simple HTTP server in a single C/C++ header file.
+A single-header C HTTP/1.1 application server: route a request, return JSON, bytes, or text. HTML is one content type, not the product.
+
+## Quick start
+
+`GET /ping` with `teapot_json` and a loopback bind:
+
+```c
+#define STB_TEAPOT_IMPLEMENTATION
+#include "stb_teapot.h"
+
+static teapot_response ping(const teapot_request *req)
+{
+    (void)req;
+    return teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
+}
+
+int main(void)
+{
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/ping", ping},
+    };
+    teapot_server server = {
+        .port = 8080,
+        .routes = routes,
+        .route_count = 1,
+        .bind_host = "127.0.0.1",
+    };
+    return teapot_listen(&server);
+}
+```
+
+`curl http://127.0.0.1:8080/ping` → `{"ok":true}`.
+
+Also `teapot_text` and `teapot_bytes`. Full example: `examples/basic_server.c`.
+
+## `teapot_listen` vs `teapot_run`
+
+| | `teapot_listen` | `teapot_run` |
+| --- | --- | --- |
+| Concurrency | One client at a time | Many clients on one thread |
+| Typical use | Small tools, demos | Services that must overlap I/O |
+| Example | `examples/basic_server.c` | `examples/epoll_server.c` |
+
+Both bind, accept, and dispatch the same `teapot_route` table. Stop with `teapot_request_stop`. For one thread per client, open the listener yourself (`examples/threaded_server.c`).
+
+## Bind address
+
+Set `bind_host` to `"127.0.0.1"` for loopback (what the examples do). `NULL` binds `0.0.0.0` (all IPv4 interfaces). The value is a dotted IPv4 address, not a hostname: `"localhost"` fails.
+
+## TLS, HTTP/2, templates
+
+TLS and HTTP/2 belong in a reverse proxy, not in this header. HTML templates are optional and **not this release**.
 
 ## Build and test
 
@@ -12,7 +63,7 @@ cc nob.c -o nob && ./nob
 
 On Windows, run `./nob.exe` instead of `./nob`.
 
-`./nob` compiles examples into `build/` and runs `unit_test_headers`, `unit_test_request`, `unit_test_response`, and `unit_test_timeout`. A failing unit test fails the build. If `valgrind` is installed, unit tests run under `--leak-check=full`.
+`./nob` amalgamates `src/` into `stb_teapot.h`, compiles examples into `build/`, and runs the unit tests. A failing unit test fails the build. If `valgrind` is installed, unit tests run under `--leak-check=full`.
 
 Fuzzing is a separate clang artifact. `./nob fuzz` requires `clang`, builds `build/fuzz_serve` with `-fsanitize=fuzzer,address,undefined`, and smokes libFuzzer for 30 seconds against a copy of `tests/fuzz_corpus` (so the checked-in seeds stay clean). CI sets `TEAPOT_FUZZ_GRAMMAR=1` so rfc_lite-valid HTTP that teapot 400s is a failure.
 
@@ -45,16 +96,6 @@ Request line + headers + `Content-Length` body. No header folding, no chunked en
 
 Clang `-Wsign-conversion` is not compatible with this project's `-Werror` flags; `gcc` is the CI compiler.
 
-## Features
-- Single header file: `stb_teapot.h`
-- Lightweight and easy to integrate into existing projects
-- Supports basic HTTP functionalities
-- Cross-platform compatibility (Windows, Linux, macOS)
-- Minimal dependencies
-
-## Usage
-Include `stb_teapot.h` after `#define STB_TEAPOT_IMPLEMENTATION`. See `examples/basic_server.c` for a blocking listener, `examples/epoll_server.c` for multiplexed `teapot_run`, `examples/threaded_server.c` for one thread per client, and `examples/demo_handlers.h` for shared hello/echo handlers.
-
 ## Wait backends (`teapot_run`)
 
 `teapot_run` multiplexes connections with a compile-time wait backend. Define **one** of these **before** including `stb_teapot.h` (do not set `TEAPOT_WAIT` by number):
@@ -69,7 +110,7 @@ Include `stb_teapot.h` after `#define STB_TEAPOT_IMPLEMENTATION`. See `examples/
 
 Example: `#define TEAPOT_USE_POLL` then `#include "stb_teapot.h"`.
 
-**WFMO cap:** `TEAPOT_USE_WFMO` supports at most **64** wait entries (listen socket + clients). A 65th `tp_wait_add` fails; the reactor disarms listen until a slot frees. Prefer `TEAPOT_USE_WSAPOLL` when you need more concurrent fds on Windows.
+**WFMO cap:** `TEAPOT_USE_WFMO` can watch at most **64** sockets at once (listen socket plus clients). Past that, teapot stops accepting until a connection finishes. Prefer `TEAPOT_USE_WSAPOLL` when you need more concurrent connections on Windows.
 
 ## License
 This project is licensed under the MIT License. See the LICENSE file for details.
@@ -77,4 +118,3 @@ This project is licensed under the MIT License. See the LICENSE file for details
 ## Contributing
 Contributions are welcome! Please fork the repository and submit a pull request with your changes.
 For major changes, please open an issue first to discuss what you would like to change.
-
