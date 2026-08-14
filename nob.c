@@ -14,6 +14,7 @@
 #define COMPILE_FLAGS "-O2", "-g",                                                                           \
                       "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wconversion", "-Wimplicit-fallthrough", \
                       "-Wshadow", "-Wpointer-arith", "-Wcast-qual", "-Wstrict-prototypes",                   \
+                      "-Wno-missing-field-initializers",                                                     \
                       "-D_FORTIFY_SOURCE=2",                                                                 \
                       "-D_GLIBCXX_ASSERTIONS",                                                               \
                       "-fexceptions",                                                                        \

@@ -163,6 +163,22 @@ static void test_clamping(void)
     free(long_val);
 }
 
+static void test_headers_check(void)
+{
+    tp_headers h = {0};
+    char *buf = mkbuf("Content-Type: text/plain\r\n");
+    tp_extract_header_keyval(&h, buf, strlen(buf));
+
+    tp_header_line out = {0};
+    ok("check missing", tp_headers_check(&h, "X-No", NULL, &out) == TP_HEADER_NOT_FOUND);
+    ok("check found", tp_headers_check(&h, "Content-Type", NULL, &out) == TP_HEADER_FOUND);
+    ok("check match", tp_headers_check(&h, "Content-Type", "text/plain", &out) == TP_HEADER_MATCH);
+    ok("check mismatch", tp_headers_check(&h, "Content-Type", "text/html", &out) == TP_HEADER_FOUND);
+
+    tp_headers_free(&h);
+    free(buf);
+}
+
 int main(void)
 {
     printf("Running header parsing unit tests...\n\n");
@@ -175,6 +191,7 @@ int main(void)
     test_no_colon_ignored();
     test_empty_name_ignored();
     test_clamping();
+    test_headers_check();
 
     if (failures == 0)
     {
