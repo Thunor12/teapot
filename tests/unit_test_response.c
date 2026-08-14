@@ -265,6 +265,40 @@ static void test_empty_headers_byte_identical_to_text_ok(void)
     teapot_response_free(&r);
 }
 
+static void test_headerf_success_on_wire(void)
+{
+    teapot_response r = teapot_text(TEAPOT_HTTP_OK, "OK");
+    ok("headerf HX-Trigger", teapot_response_headerf(&r, "HX-Trigger", "flash-%s", "ok") == 0);
+
+    char received[1024];
+    ok("send headerf", send_and_read(&r, received, sizeof(received)) == 0);
+    ok("headerf value on wire", strstr(received, "HX-Trigger: flash-ok\r\n") != NULL);
+    teapot_response_free(&r);
+}
+
+static void test_headerf_rejects_oversize_format(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+
+    char big[TP_MAX_HEADER_VALUE_LEN + 8];
+    memset(big, 'V', sizeof(big) - 1);
+    big[sizeof(big) - 1] = '\0';
+    ok("headerf reject oversize format", teapot_response_headerf(&r, "X-Ok", "%s", big) == -1);
+    ok("headerf oversize left empty", r.headers.count == 0);
+    teapot_response_free(&r);
+}
+
+static void test_headerf_rejects_reserved(void)
+{
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+    ok("headerf reject Content-Length", teapot_response_headerf(&r, "Content-Length", "%d", 999) == -1);
+    ok("headerf reject connection", teapot_response_headerf(&r, "connection", "%s", "keep-alive") == -1);
+    ok("headerf reserved left empty", r.headers.count == 0);
+    teapot_response_free(&r);
+}
+
 int main(void)
 {
     printf("Running response unit tests...\n\n");
@@ -281,6 +315,9 @@ int main(void)
     test_two_set_cookie_append_order();
     test_teapot_html();
     test_empty_headers_byte_identical_to_text_ok();
+    test_headerf_success_on_wire();
+    test_headerf_rejects_oversize_format();
+    test_headerf_rejects_reserved();
     if (failures == 0)
     {
         printf("\nALL TESTS PASSED\n");
