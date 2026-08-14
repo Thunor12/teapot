@@ -65,7 +65,9 @@ static void test_long_content_type_response(void)
     char received[1024];
     (void)read_all(sockets[1], received, sizeof(received));
     ok("response includes full long content type", strstr(received, content_type) != NULL);
-    ok("response includes body length", strstr(received, "Content-Length: 2\r\n\r\nOK") != NULL);
+    ok("response includes body length", strstr(received, "Content-Length: 2\r\n") != NULL);
+    ok("response includes connection close", strstr(received, "Connection: close\r\n") != NULL);
+    ok("response ends headers before body", strstr(received, "\r\n\r\nOK") != NULL);
 
     teapot_response_free(&resp);
     teapot_close(sockets[0]);

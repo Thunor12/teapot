@@ -96,6 +96,7 @@ const char *tests_and_examples[] = {
     TEST_DIR "unit_test_headers.c",
     TEST_DIR "unit_test_request.c",
     TEST_DIR "unit_test_response.c",
+    TEST_DIR "unit_test_timeout.c",
     EXAMPLE_DIR "basic_server.c",
     EXAMPLE_DIR "threaded_server.c",
     EXAMPLE_DIR "thread_pool_server_crossplat.c",
@@ -105,6 +106,7 @@ static const char *unit_tests[] = {
     BUILD_DIR "unit_test_headers",
     BUILD_DIR "unit_test_request",
     BUILD_DIR "unit_test_response",
+    BUILD_DIR "unit_test_timeout",
 };
 
 static int compile_all_exe(const char **exes, size_t test_count)

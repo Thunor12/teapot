@@ -378,6 +378,65 @@ static void test_request_line_extra_spaces_still_routes(void)
     ok("extra spaces response is 200", strstr(response, "HTTP/1.1 200 OK") != NULL);
 }
 
+static void test_transfer_encoding_rejected(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_POST, "/echo/", recording_handler, 1},
+    };
+
+    reset_observed();
+    int rc = exchange_request("POST /echo/x HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                              routes, 1, response, sizeof(response));
+    ok("chunked returns error", rc == -1);
+    ok("chunked does not reach handler", handler_called == 0);
+    ok("chunked response is 400", strstr(response, "HTTP/1.1 400 Bad Request") != NULL);
+}
+
+static void test_duplicate_content_length_mismatch_rejected(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_POST, "/echo/", recording_handler, 1},
+    };
+
+    reset_observed();
+    int rc = exchange_request("POST /echo/x HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 3\r\n\r\nxyz", routes, 1,
+                              response, sizeof(response));
+    ok("dup CL mismatch returns error", rc == -1);
+    ok("dup CL mismatch does not reach handler", handler_called == 0);
+    ok("dup CL mismatch response is 400", strstr(response, "HTTP/1.1 400 Bad Request") != NULL);
+}
+
+static void test_duplicate_content_length_identical_ok(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_POST, "/echo/", recording_handler, 1},
+    };
+
+    reset_observed();
+    int rc = exchange_request("POST /echo/x HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nxyz", routes, 1,
+                              response, sizeof(response));
+    ok("dup CL identical succeeds", rc == 0);
+    ok("dup CL identical reaches handler", handler_called == 1);
+    ok("dup CL identical body length", observed_body_length == 3);
+}
+
+static void test_pipelined_leftover_rejected(void)
+{
+    char response[512];
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/", recording_handler},
+    };
+
+    reset_observed();
+    int rc = exchange_request("GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n", routes, 1, response, sizeof(response));
+    ok("pipeline returns error", rc == -1);
+    ok("pipeline does not reach handler", handler_called == 0);
+    ok("pipeline response is 400", strstr(response, "HTTP/1.1 400 Bad Request") != NULL);
+}
+
 int main(void)
 {
     printf("Running request unit tests...\n\n");
@@ -393,6 +452,10 @@ int main(void)
     test_prefix_without_slash_does_not_match_extension();
     test_exact_route_does_not_act_as_glob();
     test_request_line_extra_spaces_still_routes();
+    test_transfer_encoding_rejected();
+    test_duplicate_content_length_mismatch_rejected();
+    test_duplicate_content_length_identical_ok();
+    test_pipelined_leftover_rejected();
 
     if (failures == 0)
     {

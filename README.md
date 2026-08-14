@@ -12,7 +12,7 @@ cc nob.c -o nob && ./nob
 
 On Windows, run `./nob.exe` instead of `./nob`.
 
-`./nob` compiles examples into `build/` and runs `unit_test_headers`, `unit_test_request`, and `unit_test_response`. A failing unit test fails the build. If `valgrind` is installed, unit tests run under `--leak-check=full`.
+`./nob` compiles examples into `build/` and runs `unit_test_headers`, `unit_test_request`, `unit_test_response`, and `unit_test_timeout`. A failing unit test fails the build. If `valgrind` is installed, unit tests run under `--leak-check=full`.
 
 Fuzzing is a separate clang artifact. `./nob fuzz` requires `clang`, builds `build/fuzz_serve` with `-fsanitize=fuzzer,address,undefined`, and smokes libFuzzer for 30 seconds against a copy of `tests/fuzz_corpus` (so the checked-in seeds stay clean). CI sets `TEAPOT_FUZZ_GRAMMAR=1` so rfc_lite-valid HTTP that teapot 400s is a failure.
 
@@ -41,7 +41,7 @@ Do not close the same fd again.
 
 ## HTTP subset
 
-Request line + headers + `Content-Length` body. No header folding, no chunked encoding, no pipelining. Oversize headers and bodies are 400.
+Request line + headers + `Content-Length` body. No header folding, no chunked encoding, no pipelining. `Transfer-Encoding` is 400. Duplicate `Content-Length` is 400 unless the values parse to the same number. Extra bytes after the body in the first read are 400. Oversize headers and bodies are 400. Client sockets get a recv timeout (`TEAPOT_RECV_TIMEOUT_MS`, default 5000). Responses include `Connection: close`.
 
 Clang `-Wsign-conversion` is not compatible with this project's `-Werror` flags; `gcc` is the CI compiler.
 

@@ -67,6 +67,9 @@ extern "C"
 #ifndef TEAPOT_MAX_BODY_SIZE
 #define TEAPOT_MAX_BODY_SIZE (4u * 1024u * 1024u)
 #endif
+#ifndef TEAPOT_RECV_TIMEOUT_MS
+#define TEAPOT_RECV_TIMEOUT_MS 5000
+#endif
 
 #ifdef __cplusplus
 #define TP_DECLTYPE_CAST(T) (decltype(T))
@@ -321,6 +324,7 @@ extern "C"
     }
 #else
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 #include <unistd.h>
     int teapot_socket_ok(stb_teapot_socket_t s)
@@ -652,19 +656,32 @@ extern "C"
 
     static int teapot_content_length_from_headers(const tp_headers *h, size_t *out_length)
     {
-        const tp_string_builder *val = tp_headers_get(h, "Content-Length");
         *out_length = 0;
-        if (val == NULL || val->items == NULL || val->items[0] == '\0')
-            return 0;
-        char *end = NULL;
-        unsigned long n = strtoul(val->items, &end, 10);
-        if (end == val->items)
-            return -1;
-        while (*end != '\0' && isspace((unsigned char)*end))
-            ++end;
-        if (*end != '\0' || n > (unsigned long)TEAPOT_MAX_BODY_SIZE)
-            return -1;
-        *out_length = (size_t)n;
+        int saw_cl = 0;
+        unsigned long cl = 0;
+        for (size_t i = 0; i < h->count; ++i)
+        {
+            const char *name = h->items[i].name.items ? h->items[i].name.items : "";
+            if (tp_stricmp(name, "Transfer-Encoding") == 0)
+                return -1;
+            if (tp_stricmp(name, "Content-Length") != 0)
+                continue;
+            const char *val = h->items[i].value.items ? h->items[i].value.items : "";
+            char *end = NULL;
+            unsigned long n = strtoul(val, &end, 10);
+            if (end == val)
+                return -1;
+            while (*end != '\0' && isspace((unsigned char)*end))
+                ++end;
+            if (*end != '\0' || n > (unsigned long)TEAPOT_MAX_BODY_SIZE)
+                return -1;
+            if (saw_cl && n != cl)
+                return -1;
+            saw_cl = 1;
+            cl = n;
+        }
+        if (saw_cl)
+            *out_length = (size_t)cl;
         return 0;
     }
 
@@ -723,6 +740,8 @@ extern "C"
 
         const char *body_start = buffer + i;
         size_t body_available = size > i ? size - i : 0;
+        if (body_available > content_length)
+            return -1;
         size_t to_append = content_length < body_available ? content_length : body_available;
 
         req->method = method;
@@ -765,9 +784,6 @@ extern "C"
         teapot_response_free(&resp);
     }
 
-    // -----------------------------------------------------
-    // 🧭 Find Matching Route
-    // -----------------------------------------------------
     static teapot_handler teapot_find_handler(teapot_server *server, teapot_request *req)
     {
         for (size_t i = 0; i < server->route_count; i++)
@@ -788,10 +804,6 @@ extern "C"
         }
         return NULL;
     }
-
-    // -----------------------------------------------------
-    // 🫖 Listen Loop
-    // -----------------------------------------------------
 
     int teapot_listener_open(teapot_server *server, stb_teapot_socket_t *out_listen_sock)
     {
@@ -885,7 +897,7 @@ extern "C"
 
         tp_string_builder header = {0};
         tp_sb_appendf(&header,
-                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\n\r\n",
+                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n\r\n",
                       resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
 
         int rc = teapot_write_all(client, header.items, header.count);
@@ -900,6 +912,17 @@ extern "C"
     {
         if (!server || !teapot_socket_ok(client))
             return -1;
+
+#if TEAPOT_RECV_TIMEOUT_MS > 0
+#ifdef _WIN32
+        DWORD ms = (DWORD)TEAPOT_RECV_TIMEOUT_MS;
+        (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char *)&ms, sizeof(ms));
+#else
+        struct timeval tv = {.tv_sec = (time_t)(TEAPOT_RECV_TIMEOUT_MS / 1000),
+                             .tv_usec = (suseconds_t)((TEAPOT_RECV_TIMEOUT_MS % 1000) * 1000)};
+        (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+#endif
 
         char buffer[8192] = {0};
         int received = 0;
