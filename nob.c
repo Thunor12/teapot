@@ -832,38 +832,10 @@ defer:
 
 static int embed_if_stale(const char *src_dir, const char *out_path)
 {
-    int ret = 0;
-    EmbedFiles files = {0};
-    Nob_File_Paths inputs = {0};
-
-    if (0 != embed_collect(src_dir, &files, &inputs))
-    {
-        ret = 1;
-        goto defer;
-    }
-
-    int rebuild = nob_needs_rebuild(out_path, inputs.items, inputs.count);
-    if (rebuild < 0)
-    {
-        ret = 1;
-        goto defer;
-    }
-    if (rebuild == 0)
-    {
-        nob_log(NOB_INFO, "%s up to date", out_path);
-        goto defer;
-    }
-
-    if (0 != embed_write_header(out_path, &files))
-    {
-        ret = 1;
-        goto defer;
-    }
-
-defer:
-    embed_files_free(&files);
-    nob_da_free(inputs);
-    return ret;
+    /* Always regenerate. needs_rebuild on surviving file mtimes misses
+     * deletions (and empty trees leave a stale header if the out exists).
+     * Docs/fixture trees are small, so rewrite cost is negligible. */
+    return embed_generate(src_dir, out_path);
 }
 
 static int embed_selfcheck_negative(void)
