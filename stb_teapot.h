@@ -1692,7 +1692,11 @@ static void tp_run_accept(tp_run_ctx *ctx)
         }
         client = teapot_listener_accept(ctx->listen_sock);
         if (!teapot_socket_ok(client))
+        {
+            if (!teapot_would_block())
+                tp_run_disarm(ctx);
             return;
+        }
         c = &ctx->slab[slot];
         if (teapot_set_nonblock(client) != 0)
         {
