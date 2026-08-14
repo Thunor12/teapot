@@ -10,8 +10,11 @@
         return s != INVALID_SOCKET;
     }
 #else
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <arpa/inet.h>
 #include <unistd.h>
     int teapot_socket_ok(stb_teapot_socket_t s)
@@ -43,6 +46,41 @@
         teapot_close(listen_sock);
 #ifdef _WIN32
         WSACleanup();
+#endif
+    }
+
+    static int teapot_set_nonblock(stb_teapot_socket_t fd)
+    {
+#ifdef _WIN32
+        u_long mode = 1;
+        return ioctlsocket(fd, FIONBIO, &mode) == 0 ? 0 : -1;
+#else
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0)
+            return -1;
+        return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 ? 0 : -1;
+#endif
+    }
+
+    static int teapot_would_block(void)
+    {
+#ifdef _WIN32
+        int e = WSAGetLastError();
+        return e == WSAEWOULDBLOCK;
+#else
+        return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+    }
+
+    static uint64_t tp_now_ms(void)
+    {
+#ifdef _WIN32
+        return (uint64_t)GetTickCount64();
+#else
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+            return 0;
+        return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
 #endif
     }
 

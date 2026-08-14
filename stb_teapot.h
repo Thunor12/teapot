@@ -2,6 +2,10 @@
 #ifndef STB_TEAPOT_H
 #define STB_TEAPOT_H
 
+#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
+
 // Usage:
 //
 // #define STB_TEAPOT_IMPLEMENTATION
@@ -333,8 +337,11 @@ extern "C"
         return s != INVALID_SOCKET;
     }
 #else
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <arpa/inet.h>
 #include <unistd.h>
     int teapot_socket_ok(stb_teapot_socket_t s)
@@ -366,6 +373,41 @@ extern "C"
         teapot_close(listen_sock);
 #ifdef _WIN32
         WSACleanup();
+#endif
+    }
+
+    static int teapot_set_nonblock(stb_teapot_socket_t fd)
+    {
+#ifdef _WIN32
+        u_long mode = 1;
+        return ioctlsocket(fd, FIONBIO, &mode) == 0 ? 0 : -1;
+#else
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0)
+            return -1;
+        return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 ? 0 : -1;
+#endif
+    }
+
+    static int teapot_would_block(void)
+    {
+#ifdef _WIN32
+        int e = WSAGetLastError();
+        return e == WSAEWOULDBLOCK;
+#else
+        return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+    }
+
+    static uint64_t tp_now_ms(void)
+    {
+#ifdef _WIN32
+        return (uint64_t)GetTickCount64();
+#else
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+            return 0;
+        return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
 #endif
     }
 
@@ -736,13 +778,6 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#else
-#include <sys/socket.h>
-#include <sys/time.h>
-#endif
-
     static const char *teapot_status_to_str(int status)
     {
         switch (status)
@@ -788,34 +823,21 @@ extern "C"
         return n;
     }
 
-    static int teapot_complete_request_body(stb_teapot_socket_t client, teapot_request *req, size_t content_length)
+    static int teapot_format_response(tp_string_builder *out, const teapot_response *resp)
     {
-        if (req->body_length >= content_length)
-            return 0;
-        req->body.count = req->body_length;
-        while (req->body_length < content_length)
-        {
-            char read_buf[4096];
-            size_t to_read = content_length - req->body_length;
-            if (to_read > sizeof(read_buf))
-                to_read = sizeof(read_buf);
-            int n = teapot_read(client, read_buf, (int)to_read);
-            if (n <= 0)
-                return -1;
-            tp_sb_append_buf(&req->body, read_buf, (size_t)n);
-            req->body_length += (size_t)n;
-        }
-        tp_sb_append_null(&req->body);
-        return 0;
-    }
+        if (!out || !resp)
+            return -1;
 
-    static void teapot_send_status_body(stb_teapot_socket_t client, int status, const char *msg)
-    {
-        teapot_response resp;
-        teapot_response_init(&resp, status);
-        tp_sb_appendf(&resp.body, "%s", msg);
-        (void)teapot_send_response(client, &resp);
-        teapot_response_free(&resp);
+        const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
+        if (strpbrk(ct, "\r\n") != NULL)
+            return -1;
+
+        tp_sb_appendf(out,
+                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n\r\n",
+                      resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+        if (resp->body.count > 0)
+            tp_sb_append_buf(out, resp->body.items, resp->body.count);
+        return 0;
     }
 
     teapot_response teapot_text(int status, const char *s)
@@ -901,75 +923,15 @@ extern "C"
         if (!teapot_socket_ok(client) || !resp)
             return -1;
 
-        const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        if (strpbrk(ct, "\r\n") != NULL)
-            return -1;
-
-        tp_string_builder header = {0};
-        tp_sb_appendf(&header,
-                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n\r\n",
-                      resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        int rc = teapot_write_all(client, header.items, header.count);
-        if (rc == 0 && resp->body.count > 0)
-            rc = teapot_write_all(client, resp->body.items, resp->body.count);
-
-        tp_sb_free(header);
-        return rc;
-    }
-
-    int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client)
-    {
-        if (!server || !teapot_socket_ok(client))
-            return -1;
-
-#if TEAPOT_RECV_TIMEOUT_MS > 0
-#ifdef _WIN32
-        DWORD ms = (DWORD)TEAPOT_RECV_TIMEOUT_MS;
-        (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char *)&ms, sizeof(ms));
-#else
-        struct timeval tv = {.tv_sec = (time_t)(TEAPOT_RECV_TIMEOUT_MS / 1000),
-                             .tv_usec = (suseconds_t)((TEAPOT_RECV_TIMEOUT_MS % 1000) * 1000)};
-        (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
-#endif
-
-        char buffer[8192] = {0};
-        int received = 0;
-        if (teapot_recv_request(client, buffer, (int)sizeof(buffer), &received) < 0)
-            return -1;
-
-        teapot_request req = {0};
-        size_t content_length = 0;
-        if (parse_request(buffer, (size_t)received, &req, &content_length) < 0)
+        tp_string_builder out = {0};
+        if (teapot_format_response(&out, resp) != 0)
         {
-            free_request(&req);
-            teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
+            tp_sb_free(out);
             return -1;
         }
 
-        if (teapot_complete_request_body(client, &req, content_length) != 0)
-        {
-            free_request(&req);
-            teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
-            return -1;
-        }
-
-        req.user = server->user;
-        teapot_handler handler = teapot_find_handler(server, &req);
-        teapot_response resp;
-        teapot_response_init(&resp, TEAPOT_HTTP_OK);
-        if (handler)
-            resp = handler(&req);
-        else
-        {
-            resp.status = TEAPOT_HTTP_NOT_FOUND;
-            tp_sb_appendf(&resp.body, "404 Not Found\n");
-        }
-
-        int rc = teapot_send_response(client, &resp);
-        teapot_response_free(&resp);
-        free_request(&req);
+        int rc = teapot_write_all(client, out.items, out.count);
+        tp_sb_free(out);
         return rc;
     }
 
@@ -977,6 +939,381 @@ extern "C"
     {
         int rc = teapot_serve_client(server, client);
         teapot_close(client);
+        return rc;
+    }
+
+#include <limits.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <errno.h>
+#include <poll.h>
+#include <sys/socket.h>
+#endif
+
+#ifndef TEAPOT_CONN_BUF
+#define TEAPOT_CONN_BUF 8192
+#endif
+
+#ifndef TEAPOT_MAX_CONNS
+#define TEAPOT_MAX_CONNS 128
+#endif
+
+    typedef enum
+    {
+        TEAPOT_IO_NEED_READ = 1,
+        TEAPOT_IO_NEED_WRITE = 2,
+        TEAPOT_IO_DONE = 0,
+        TEAPOT_IO_ERROR = -1,
+    } teapot_io;
+
+    typedef enum
+    {
+        TEAPOT_CONN_READ_HEAD,
+        TEAPOT_CONN_READ_BODY,
+        TEAPOT_CONN_WRITE_RESP,
+        TEAPOT_CONN_DONE,
+    } teapot_conn_phase;
+
+    typedef struct teapot_conn
+    {
+        teapot_server *server;
+        stb_teapot_socket_t fd;
+        teapot_conn_phase phase;
+        char in[TEAPOT_CONN_BUF];
+        size_t in_len;
+        size_t header_end; /* index of '\r' of the blank line; 0 until seen */
+        size_t body_need;
+        size_t body_got;
+        teapot_request req;
+        teapot_response res;
+        tp_string_builder out;
+        size_t out_sent;
+        uint64_t deadline_ms; /* set at init; does not reset */
+        int failed;
+        int slot_used;
+    } teapot_conn;
+
+    static size_t teapot_find_header_end(const char *buf, size_t n)
+    {
+        if (n < 4)
+            return (size_t)-1;
+        for (size_t i = 0; i + 3 < n; ++i)
+        {
+            if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n')
+                return i;
+        }
+        return (size_t)-1;
+    }
+
+    static teapot_io teapot_conn_begin_400(teapot_conn *c)
+    {
+        teapot_response_free(&c->res);
+        teapot_response_init(&c->res, TEAPOT_HTTP_BAD_REQUEST);
+        tp_sb_appendf(&c->res.body, "400 Bad Request\n");
+        tp_sb_free(c->out);
+        c->out = (tp_string_builder){0};
+        c->out_sent = 0;
+        if (teapot_format_response(&c->out, &c->res) != 0)
+        {
+            c->failed = 1;
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_ERROR;
+        }
+        c->failed = 1;
+        c->phase = TEAPOT_CONN_WRITE_RESP;
+        return TEAPOT_IO_NEED_WRITE;
+    }
+
+    static teapot_io teapot_conn_dispatch(teapot_conn *c)
+    {
+        c->req.user = c->server->user;
+        teapot_handler handler = teapot_find_handler(c->server, &c->req);
+        teapot_response_free(&c->res);
+        teapot_response_init(&c->res, TEAPOT_HTTP_OK);
+        if (handler)
+            c->res = handler(&c->req);
+        else
+        {
+            c->res.status = TEAPOT_HTTP_NOT_FOUND;
+            tp_sb_appendf(&c->res.body, "404 Not Found\n");
+        }
+
+        tp_sb_free(c->out);
+        c->out = (tp_string_builder){0};
+        c->out_sent = 0;
+        if (teapot_format_response(&c->out, &c->res) != 0)
+        {
+            c->failed = 1;
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_ERROR;
+        }
+        c->failed = 0;
+        c->phase = TEAPOT_CONN_WRITE_RESP;
+        return TEAPOT_IO_NEED_WRITE;
+    }
+
+    void teapot_conn_init(teapot_conn *c, teapot_server *server, stb_teapot_socket_t fd)
+    {
+        memset(c, 0, sizeof(*c));
+        c->server = server;
+        c->fd = fd;
+        c->phase = TEAPOT_CONN_READ_HEAD;
+#if TEAPOT_RECV_TIMEOUT_MS > 0
+        c->deadline_ms = tp_now_ms() + (uint64_t)TEAPOT_RECV_TIMEOUT_MS;
+#else
+        c->deadline_ms = 0;
+#endif
+    }
+
+    void teapot_conn_free(teapot_conn *c)
+    {
+        if (!c)
+            return;
+        free_request(&c->req);
+        teapot_response_free(&c->res);
+        tp_sb_free(c->out);
+        c->out.items = NULL;
+        c->out.count = 0;
+        c->out.capacity = 0;
+    }
+
+    static teapot_io teapot_conn_read_head(teapot_conn *c)
+    {
+        if (c->in_len == (size_t)TEAPOT_CONN_BUF)
+            return teapot_conn_begin_400(c);
+
+        int space = (int)((size_t)TEAPOT_CONN_BUF - c->in_len);
+        int n = (int)recv(c->fd, c->in + c->in_len, (size_t)space, 0);
+        if (n < 0)
+        {
+            if (teapot_would_block())
+                return TEAPOT_IO_NEED_READ;
+            c->failed = 1;
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_ERROR;
+        }
+        if (n == 0)
+            return teapot_conn_begin_400(c);
+
+        c->in_len += (size_t)n;
+        size_t hend = teapot_find_header_end(c->in, c->in_len);
+        if (hend == (size_t)-1)
+        {
+            if (c->in_len == (size_t)TEAPOT_CONN_BUF)
+                return teapot_conn_begin_400(c);
+            return TEAPOT_IO_NEED_READ;
+        }
+
+        c->header_end = hend;
+        free_request(&c->req);
+        c->req = (teapot_request){0};
+        size_t content_length = 0;
+        if (parse_request(c->in, c->in_len, &c->req, &content_length) < 0)
+            return teapot_conn_begin_400(c);
+
+        c->body_need = content_length;
+        c->body_got = c->req.body_length;
+        if (c->body_need > (size_t)TEAPOT_MAX_BODY_SIZE)
+            return teapot_conn_begin_400(c);
+
+        if (c->body_got >= c->body_need)
+        {
+            if (c->req.body.count == c->req.body_length)
+                tp_sb_append_null(&c->req.body);
+            return teapot_conn_dispatch(c);
+        }
+
+        c->phase = TEAPOT_CONN_READ_BODY;
+        return TEAPOT_IO_NEED_READ;
+    }
+
+    static teapot_io teapot_conn_read_body(teapot_conn *c)
+    {
+        if (c->body_need > (size_t)TEAPOT_MAX_BODY_SIZE)
+            return teapot_conn_begin_400(c);
+
+        char bounce[4096];
+        size_t remaining = c->body_need - c->body_got;
+        size_t to_read = remaining > sizeof(bounce) ? sizeof(bounce) : remaining;
+        int n = (int)recv(c->fd, bounce, to_read, 0);
+        if (n < 0)
+        {
+            if (teapot_would_block())
+                return TEAPOT_IO_NEED_READ;
+            c->failed = 1;
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_ERROR;
+        }
+        if (n == 0)
+            return teapot_conn_begin_400(c);
+
+        c->req.body.count = c->req.body_length;
+        tp_sb_append_buf(&c->req.body, bounce, (size_t)n);
+        c->req.body_length += (size_t)n;
+        c->body_got = c->req.body_length;
+
+        if (c->body_got < c->body_need)
+            return TEAPOT_IO_NEED_READ;
+
+        tp_sb_append_null(&c->req.body);
+        return teapot_conn_dispatch(c);
+    }
+
+    static teapot_io teapot_conn_write_resp(teapot_conn *c)
+    {
+        if (c->out_sent >= c->out.count)
+        {
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_DONE;
+        }
+
+        size_t remaining = c->out.count - c->out_sent;
+        int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+#ifdef _WIN32
+        int n = send(c->fd, c->out.items + c->out_sent, chunk, 0);
+#else
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+        int n = (int)send(c->fd, c->out.items + c->out_sent, (size_t)chunk, MSG_NOSIGNAL);
+#endif
+        if (n < 0)
+        {
+            if (teapot_would_block())
+                return TEAPOT_IO_NEED_WRITE;
+            c->failed = 1;
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_ERROR;
+        }
+        if (n == 0)
+        {
+            c->failed = 1;
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_ERROR;
+        }
+        c->out_sent += (size_t)n;
+        if (c->out_sent >= c->out.count)
+        {
+            c->phase = TEAPOT_CONN_DONE;
+            return TEAPOT_IO_DONE;
+        }
+        return TEAPOT_IO_NEED_WRITE;
+    }
+
+    teapot_io teapot_conn_step(teapot_conn *c)
+    {
+        if (!c || !c->server || !teapot_socket_ok(c->fd))
+            return TEAPOT_IO_ERROR;
+
+        switch (c->phase)
+        {
+        case TEAPOT_CONN_READ_HEAD:
+            return teapot_conn_read_head(c);
+        case TEAPOT_CONN_READ_BODY:
+            return teapot_conn_read_body(c);
+        case TEAPOT_CONN_WRITE_RESP:
+            return teapot_conn_write_resp(c);
+        case TEAPOT_CONN_DONE:
+            return c->failed ? TEAPOT_IO_ERROR : TEAPOT_IO_DONE;
+        default:
+            c->failed = 1;
+            return TEAPOT_IO_ERROR;
+        }
+    }
+
+    int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client)
+    {
+        if (!server || !teapot_socket_ok(client))
+            return -1;
+        if (teapot_set_nonblock(client) != 0)
+            return -1;
+
+        teapot_conn c;
+        teapot_conn_init(&c, server, client);
+        int rc = -1;
+
+        for (;;)
+        {
+            teapot_io io = teapot_conn_step(&c);
+            if (io == TEAPOT_IO_DONE)
+            {
+                rc = c.failed ? -1 : 0;
+                break;
+            }
+            if (io == TEAPOT_IO_ERROR)
+            {
+                rc = -1;
+                break;
+            }
+
+            int timeout_ms = 250;
+#if TEAPOT_RECV_TIMEOUT_MS > 0
+            if (c.deadline_ms != 0 &&
+                (c.phase == TEAPOT_CONN_READ_HEAD || c.phase == TEAPOT_CONN_READ_BODY))
+            {
+                uint64_t now = tp_now_ms();
+                if (now >= c.deadline_ms)
+                {
+                    teapot_conn_free(&c);
+                    return -1;
+                }
+                uint64_t rem = c.deadline_ms - now;
+                if (rem < (uint64_t)timeout_ms)
+                    timeout_ms = (int)rem;
+                if (timeout_ms < 1)
+                    timeout_ms = 1;
+            }
+#endif
+
+#ifdef _WIN32
+            WSAPOLLFD pfd;
+            pfd.fd = client;
+            pfd.events = (io == TEAPOT_IO_NEED_READ) ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+            int pr = WSAPoll(&pfd, 1, timeout_ms);
+#else
+            struct pollfd pfd;
+            pfd.fd = client;
+            pfd.events = (io == TEAPOT_IO_NEED_READ) ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+            int pr = poll(&pfd, 1, timeout_ms);
+#endif
+            if (server->stop)
+            {
+                teapot_conn_free(&c);
+                return -1;
+            }
+            if (pr < 0)
+            {
+#ifdef _WIN32
+                teapot_conn_free(&c);
+                return -1;
+#else
+                if (errno == EINTR)
+                    continue;
+                teapot_conn_free(&c);
+                return -1;
+#endif
+            }
+            if (pr == 0)
+            {
+#if TEAPOT_RECV_TIMEOUT_MS > 0
+                if (c.deadline_ms != 0 &&
+                    (c.phase == TEAPOT_CONN_READ_HEAD || c.phase == TEAPOT_CONN_READ_BODY) &&
+                    tp_now_ms() >= c.deadline_ms)
+                {
+                    teapot_conn_free(&c);
+                    return -1;
+                }
+#endif
+                continue;
+            }
+        }
+
+        teapot_conn_free(&c);
         return rc;
     }
 

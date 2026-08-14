@@ -205,6 +205,7 @@ static const char *amalgam_c_files[] = {
     "src/tp_platform.c",
     "src/tp_parse.c",
     "src/tp_http.c",
+    "src/tp_conn.c",
     "src/tp_listen.c",
 };
 

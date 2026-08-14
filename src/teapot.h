@@ -1,6 +1,10 @@
 #ifndef STB_TEAPOT_H
 #define STB_TEAPOT_H
 
+#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
+
 // Usage:
 //
 // #define STB_TEAPOT_IMPLEMENTATION

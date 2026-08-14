@@ -4,13 +4,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#else
-#include <sys/socket.h>
-#include <sys/time.h>
-#endif
-
     static const char *teapot_status_to_str(int status)
     {
         switch (status)
@@ -56,34 +49,21 @@
         return n;
     }
 
-    static int teapot_complete_request_body(stb_teapot_socket_t client, teapot_request *req, size_t content_length)
+    static int teapot_format_response(tp_string_builder *out, const teapot_response *resp)
     {
-        if (req->body_length >= content_length)
-            return 0;
-        req->body.count = req->body_length;
-        while (req->body_length < content_length)
-        {
-            char read_buf[4096];
-            size_t to_read = content_length - req->body_length;
-            if (to_read > sizeof(read_buf))
-                to_read = sizeof(read_buf);
-            int n = teapot_read(client, read_buf, (int)to_read);
-            if (n <= 0)
-                return -1;
-            tp_sb_append_buf(&req->body, read_buf, (size_t)n);
-            req->body_length += (size_t)n;
-        }
-        tp_sb_append_null(&req->body);
-        return 0;
-    }
+        if (!out || !resp)
+            return -1;
 
-    static void teapot_send_status_body(stb_teapot_socket_t client, int status, const char *msg)
-    {
-        teapot_response resp;
-        teapot_response_init(&resp, status);
-        tp_sb_appendf(&resp.body, "%s", msg);
-        (void)teapot_send_response(client, &resp);
-        teapot_response_free(&resp);
+        const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
+        if (strpbrk(ct, "\r\n") != NULL)
+            return -1;
+
+        tp_sb_appendf(out,
+                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n\r\n",
+                      resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
+        if (resp->body.count > 0)
+            tp_sb_append_buf(out, resp->body.items, resp->body.count);
+        return 0;
     }
 
     teapot_response teapot_text(int status, const char *s)
@@ -169,75 +149,15 @@
         if (!teapot_socket_ok(client) || !resp)
             return -1;
 
-        const char *ct = (resp->content_type != NULL) ? resp->content_type : "text/plain";
-        if (strpbrk(ct, "\r\n") != NULL)
-            return -1;
-
-        tp_string_builder header = {0};
-        tp_sb_appendf(&header,
-                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: " TP_SIZE_T_FMT "\r\nConnection: close\r\n\r\n",
-                      resp->status, teapot_status_to_str(resp->status), ct, tp_da_len(resp->body));
-
-        int rc = teapot_write_all(client, header.items, header.count);
-        if (rc == 0 && resp->body.count > 0)
-            rc = teapot_write_all(client, resp->body.items, resp->body.count);
-
-        tp_sb_free(header);
-        return rc;
-    }
-
-    int teapot_serve_client(teapot_server *server, stb_teapot_socket_t client)
-    {
-        if (!server || !teapot_socket_ok(client))
-            return -1;
-
-#if TEAPOT_RECV_TIMEOUT_MS > 0
-#ifdef _WIN32
-        DWORD ms = (DWORD)TEAPOT_RECV_TIMEOUT_MS;
-        (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char *)&ms, sizeof(ms));
-#else
-        struct timeval tv = {.tv_sec = (time_t)(TEAPOT_RECV_TIMEOUT_MS / 1000),
-                             .tv_usec = (suseconds_t)((TEAPOT_RECV_TIMEOUT_MS % 1000) * 1000)};
-        (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
-#endif
-
-        char buffer[8192] = {0};
-        int received = 0;
-        if (teapot_recv_request(client, buffer, (int)sizeof(buffer), &received) < 0)
-            return -1;
-
-        teapot_request req = {0};
-        size_t content_length = 0;
-        if (parse_request(buffer, (size_t)received, &req, &content_length) < 0)
+        tp_string_builder out = {0};
+        if (teapot_format_response(&out, resp) != 0)
         {
-            free_request(&req);
-            teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
+            tp_sb_free(out);
             return -1;
         }
 
-        if (teapot_complete_request_body(client, &req, content_length) != 0)
-        {
-            free_request(&req);
-            teapot_send_status_body(client, TEAPOT_HTTP_BAD_REQUEST, "400 Bad Request\n");
-            return -1;
-        }
-
-        req.user = server->user;
-        teapot_handler handler = teapot_find_handler(server, &req);
-        teapot_response resp;
-        teapot_response_init(&resp, TEAPOT_HTTP_OK);
-        if (handler)
-            resp = handler(&req);
-        else
-        {
-            resp.status = TEAPOT_HTTP_NOT_FOUND;
-            tp_sb_appendf(&resp.body, "404 Not Found\n");
-        }
-
-        int rc = teapot_send_response(client, &resp);
-        teapot_response_free(&resp);
-        free_request(&req);
+        int rc = teapot_write_all(client, out.items, out.count);
+        tp_sb_free(out);
         return rc;
     }
 

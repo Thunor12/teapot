@@ -220,6 +220,53 @@ static void *split_serve_thread(void *arg)
     return NULL;
 }
 
+static teapot_response pong_body_handler(const teapot_request *req)
+{
+    (void)req;
+    teapot_response r;
+    teapot_response_init(&r, TEAPOT_HTTP_OK);
+    teapot_response_write(&r, "pong-body", 9);
+    return r;
+}
+
+static void test_split_headers_accumulate(void)
+{
+    stb_teapot_socket_t sockets[2];
+    ok("split hdr socketpair", socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    ok("split hdr first write",
+       write_all_raw(sockets[1], "GET /hello HTTP/1.1\r\n", 21) == 0);
+
+    teapot_route routes[] = {{TEAPOT_GET, "/hello", pong_body_handler}};
+    teapot_server server = {.port = 0, .routes = routes, .route_count = 1};
+    struct split_serve_ctx ctx = {.server = &server, .fd = sockets[0], .rc = 1};
+    pthread_t th;
+    ok("split hdr thread", pthread_create(&th, NULL, split_serve_thread, &ctx) == 0);
+
+    int drained = 0;
+    for (int i = 0; i < 2000; ++i) {
+        int unread = 0;
+        if (ioctl(sockets[0], FIONREAD, &unread) == 0 && unread == 0) {
+            drained = 1;
+            break;
+        }
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 1000000L};
+        nanosleep(&ts, NULL);
+    }
+    ok("split hdr drained", drained);
+    ok("split hdr blank line", write_all_raw(sockets[1], "\r\n", 2) == 0);
+    pthread_join(th, NULL);
+
+    char response[512];
+    ssize_t n = read(sockets[1], response, sizeof(response) - 1);
+    if (n < 0) n = 0;
+    response[n] = '\0';
+    ok("split hdr rc", ctx.rc == 0);
+    ok("split hdr 200", strstr(response, "HTTP/1.1 200") != NULL);
+    ok("split hdr body", strstr(response, "pong-body") != NULL);
+    teapot_close(sockets[0]);
+    teapot_close(sockets[1]);
+}
+
 static void test_split_body_reads_remaining_bytes(void)
 {
     stb_teapot_socket_t sockets[2];
@@ -505,6 +552,7 @@ int main(void)
     test_oversized_body_rejected_before_handler();
     test_method_prefix_rejected();
     test_oversize_header_rejected_before_handler();
+    test_split_headers_accumulate();
     test_split_body_reads_remaining_bytes();
     test_serve_client_leaves_fd_open();
     test_prefix_route_matches_subpath();

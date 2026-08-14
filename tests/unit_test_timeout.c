@@ -61,7 +61,7 @@ int main(void)
 
     if (rc == -1 && handler_called == 0)
     {
-        puts("[PASS] incomplete body times out as 400");
+        puts("[PASS] incomplete body times out without handler");
         puts("\nALL TESTS PASSED");
         return 0;
     }
