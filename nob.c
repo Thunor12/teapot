@@ -1,5 +1,5 @@
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#include "third_party/nob/nob.h"
 
 #ifdef _WIN32
 #define CC "gcc.exe"
@@ -28,6 +28,15 @@
 #endif
 
 Nob_Procs procs = {0};
+
+static void strip_c_suffix(char *name)
+{
+    size_t n = strlen(name);
+    if (n >= 2 && name[n - 2] == '.' && name[n - 1] == 'c')
+    {
+        name[n - 2] = '\0';
+    }
+}
 
 static int compile_exe(
     const char **source_files, size_t src_count, //
@@ -70,7 +79,6 @@ static int compile_exe(
         goto defer;
     }
 
-    // if (!nob_cmd_run(&cmd))
     if (!nob_cmd_run(&cmd, .async = &procs))
     {
         ret = 1;
@@ -80,7 +88,7 @@ static int compile_exe(
 defer:
     nob_cmd_free(cmd);
     nob_da_free(dep_files);
-    return 0;
+    return ret;
 }
 
 const char *tests_and_examples[] = {
@@ -89,6 +97,10 @@ const char *tests_and_examples[] = {
     TEST_DIR "unit_test_headers.c",
     EXAMPLE_DIR "threaded_server.c",
     EXAMPLE_DIR "thread_pool_server_crossplat.c",
+};
+
+static const char *unit_tests[] = {
+    BUILD_DIR "unit_test_headers",
 };
 
 static int compile_all_exe(const char **exes, size_t test_count)
@@ -105,10 +117,9 @@ static int compile_all_exe(const char **exes, size_t test_count)
         const char *exe_source = exes[i];
         const char *exe_name = nob_path_name(exe_source);
         sprintf(temp, "%s", exe_name);
+        strip_c_suffix(temp);
 
-        char *exe = strtok(temp, ".c");
-
-        nob_sb_appendf(&sb, BUILD_DIR "%s", exe);
+        nob_sb_appendf(&sb, BUILD_DIR "%s", temp);
 
 #ifdef _WIN32
         nob_sb_append_cstr(&sb, ".exe");
@@ -127,15 +138,40 @@ static int compile_all_exe(const char **exes, size_t test_count)
     }
 
 defer:
-    nob_procs_flush(&procs);
+    if (!nob_procs_flush(&procs))
+    {
+        ret = 1;
+    }
     nob_sb_free(sb);
+    return ret;
+}
+
+static int run_unit_tests(void)
+{
+    int ret = 0;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(unit_tests); i++)
+    {
+        Nob_Cmd cmd = {0};
+        char path[260];
+#ifdef _WIN32
+        snprintf(path, sizeof(path), "%s.exe", unit_tests[i]);
+#else
+        snprintf(path, sizeof(path), "%s", unit_tests[i]);
+#endif
+        nob_cmd_append(&cmd, path);
+        if (!nob_cmd_run(&cmd))
+        {
+            ret = 1;
+        }
+        nob_cmd_free(cmd);
+    }
     return ret;
 }
 
 int main(int argc, char **argv)
 {
     int ret = 0;
-    NOB_GO_REBUILD_URSELF(argc, argv);
+    NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "third_party/nob/nob.h");
 
     if (!nob_mkdir_if_not_exists(BUILD_DIR))
     {
@@ -159,6 +195,12 @@ int main(int argc, char **argv)
     }
 
     if (0 != compile_all_exe(tests_and_examples, NOB_ARRAY_LEN(tests_and_examples)))
+    {
+        ret = 1;
+        goto defer;
+    }
+
+    if (0 != run_unit_tests())
     {
         ret = 1;
         goto defer;

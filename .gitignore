@@ -1,8 +1,7 @@
 .vscode
 build
-nob
+/nob
+/nob.old
 
 *.exe
 *.exe.old
-nob
-nob.old

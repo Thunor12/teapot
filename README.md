@@ -3,15 +3,21 @@ A simple HTTP server in a single C/C++ header file.
 
 ## Build Tests and Examples
 
+This repo vendors [nob.h](https://github.com/tsoding/nob.h) as a git submodule. Clone with `--recurse-submodules`, or after a plain clone run `git submodule update --init`.
+
 ### Linux / macOS
 ```sh
+git submodule update --init
 cc nob.c -o nob && ./nob
 ```
 
 ### Windows
 ```sh
+git submodule update --init
 cc nob.c -o nob && ./nob.exe
 ```
+
+`./nob` compiles the examples into `build/` and runs `unit_test_headers`. A failing unit test fails the build.
 
 ## Features
 - Single header file: `stb_teapot.h`
