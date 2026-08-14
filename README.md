@@ -14,6 +14,23 @@ On Windows, run `./nob.exe` instead of `./nob`.
 
 `./nob` compiles examples into `build/` and runs `unit_test_headers`, `unit_test_request`, and `unit_test_response`. A failing unit test fails the build. If `valgrind` is installed, unit tests run under `--leak-check=full`.
 
+Fuzzing is a separate clang artifact. `./nob fuzz` requires `clang`, builds `build/fuzz_serve` with `-fsanitize=fuzzer,address,undefined`, and smokes libFuzzer for 30 seconds against a copy of `tests/fuzz_corpus` (so the checked-in seeds stay clean). CI sets `TEAPOT_FUZZ_GRAMMAR=1` so rfc_lite-valid HTTP that teapot 400s is a failure.
+
+```sh
+./nob fuzz
+./nob fuzz -max_total_time=0   # local campaign, no time cap
+```
+
+Or compile the harness yourself (copy the seeds first if you do not want libFuzzer writing into git):
+
+```sh
+mkdir -p build/fuzz_corpus
+cp -a tests/fuzz_corpus/. build/fuzz_corpus/
+clang -O1 -g -std=c17 -fsanitize=fuzzer,address,undefined \
+  -o build/fuzz_serve tests/fuzz_serve.c
+./build/fuzz_serve build/fuzz_corpus -max_total_time=30 -timeout=2
+```
+
 Do not run `build/basic_server` (or the other example servers) from `./nob` — they are blocking listeners. Use `timeout` if you start one by hand.
 
 ## Socket ownership
