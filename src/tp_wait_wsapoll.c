@@ -61,7 +61,13 @@ int tp_wait_del(tp_wait *w, stb_teapot_socket_t fd)
 
 int tp_wait_wait(tp_wait *w, int timeout_ms, tp_wait_event *out, int max_out)
 {
-    int n = WSAPoll(w->pfds, (ULONG)w->count, timeout_ms), i, k = 0;
+    int n, i, k = 0;
+    if (w->count == 0) {
+        if (timeout_ms < 0) Sleep(INFINITE);
+        else Sleep((DWORD)timeout_ms);
+        return 0;
+    }
+    n = WSAPoll(w->pfds, (ULONG)w->count, timeout_ms);
     if (n <= 0) return n;
     for (i = 0; i < w->count && k < max_out; ++i) {
         SHORT re = w->pfds[i].revents;
