@@ -10,6 +10,7 @@ typedef struct
     teapot_conn *slab;
     int max;
     int listen_armed;
+    uint64_t rearm_after_ms; /* 0 = no holdoff; set on resource disarm */
 } tp_run_ctx;
 
 static void tp_run_disarm(tp_run_ctx *ctx)
@@ -20,18 +21,36 @@ static void tp_run_disarm(tp_run_ctx *ctx)
     ctx->listen_armed = 0;
 }
 
+static void tp_run_maybe_rearm(tp_run_ctx *ctx, int force)
+{
+    int i;
+    if (ctx->listen_armed)
+        return;
+    if (!force && ctx->rearm_after_ms != 0 && tp_now_ms() < ctx->rearm_after_ms)
+        return;
+    for (i = 0; i < ctx->max; ++i)
+    {
+        if (ctx->slab[i].slot_used)
+            continue;
+        if (tp_wait_add(ctx->w, ctx->listen_sock, TEAPOT_WAIT_IN, NULL) == 0)
+        {
+            ctx->listen_armed = 1;
+            ctx->rearm_after_ms = 0;
+        }
+        return;
+    }
+}
+
 static void tp_run_drop(tp_run_ctx *ctx, teapot_conn *c)
 {
     tp_wait_del(ctx->w, c->fd);
     teapot_conn_free(c);
     teapot_close(c->fd);
     c->slot_used = 0;
-    if (!ctx->listen_armed &&
-        tp_wait_add(ctx->w, ctx->listen_sock, TEAPOT_WAIT_IN, NULL) == 0)
-        ctx->listen_armed = 1;
+    tp_run_maybe_rearm(ctx, 1);
 }
 
-static int tp_run_walk_reads(tp_run_ctx *ctx, int drop)
+static int tp_run_walk_deadlines(tp_run_ctx *ctx, int drop)
 {
     int ms = 250, i;
     uint64_t now = tp_now_ms();
@@ -41,17 +60,26 @@ static int tp_run_walk_reads(tp_run_ctx *ctx, int drop)
         uint64_t rem;
         if (!c->slot_used || !c->deadline_ms)
             continue;
-        if (c->phase != TEAPOT_CONN_READ_HEAD && c->phase != TEAPOT_CONN_READ_BODY)
+        if (c->phase != TEAPOT_CONN_READ_HEAD && c->phase != TEAPOT_CONN_READ_BODY &&
+            c->phase != TEAPOT_CONN_WRITE_RESP)
             continue;
         if (now >= c->deadline_ms)
         {
             if (drop)
                 tp_run_drop(ctx, c);
             else
-                return 0;
+                return 1;
             continue;
         }
         rem = c->deadline_ms - now;
+        if (rem < (uint64_t)ms)
+            ms = (int)rem;
+        if (ms < 1)
+            ms = 1;
+    }
+    if (!ctx->listen_armed && ctx->rearm_after_ms != 0 && ctx->rearm_after_ms > now)
+    {
+        uint64_t rem = ctx->rearm_after_ms - now;
         if (rem < (uint64_t)ms)
             ms = (int)rem;
         if (ms < 1)
@@ -80,8 +108,13 @@ static void tp_run_accept(tp_run_ctx *ctx)
         client = teapot_listener_accept(ctx->listen_sock);
         if (!teapot_socket_ok(client))
         {
-            if (!teapot_would_block())
+            if (teapot_would_block() || teapot_accept_transient())
+                return;
+            if (teapot_accept_resource())
+            {
                 tp_run_disarm(ctx);
+                ctx->rearm_after_ms = tp_now_ms() + 250;
+            }
             return;
         }
         c = &ctx->slab[slot];
@@ -132,11 +165,12 @@ int teapot_run(teapot_server *server)
         return 1;
     }
     memset(slab, 0, (size_t)max * sizeof(*slab));
-    ctx = (tp_run_ctx){server, &w, listen_sock, slab, max, 1};
+    ctx = (tp_run_ctx){server, &w, listen_sock, slab, max, 1, 0};
     while (!server->stop)
     {
-        int n = tp_wait_wait(&w, tp_run_walk_reads(&ctx, 0), ev, 64);
-        tp_run_walk_reads(&ctx, 1);
+        int n = tp_wait_wait(&w, tp_run_walk_deadlines(&ctx, 0), ev, 64);
+        tp_run_walk_deadlines(&ctx, 1);
+        tp_run_maybe_rearm(&ctx, 0);
         if (server->stop)
             break;
         if (n < 0)

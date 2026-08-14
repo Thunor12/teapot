@@ -107,6 +107,9 @@ extern "C"
 #ifndef TEAPOT_RECV_TIMEOUT_MS
 #define TEAPOT_RECV_TIMEOUT_MS 5000
 #endif
+#ifndef TEAPOT_SEND_TIMEOUT_MS
+#define TEAPOT_SEND_TIMEOUT_MS 5000
+#endif
 
 #ifdef __cplusplus
 #define TP_DECLTYPE_CAST(T) (decltype(T))

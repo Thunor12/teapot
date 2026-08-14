@@ -108,6 +108,9 @@ extern "C"
 #ifndef TEAPOT_RECV_TIMEOUT_MS
 #define TEAPOT_RECV_TIMEOUT_MS 5000
 #endif
+#ifndef TEAPOT_SEND_TIMEOUT_MS
+#define TEAPOT_SEND_TIMEOUT_MS 5000
+#endif
 
 #ifdef __cplusplus
 #define TP_DECLTYPE_CAST(T) (decltype(T))
@@ -418,7 +421,43 @@ extern "C"
         int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0)
             return -1;
-        return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 ? 0 : -1;
+        if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0)
+            return -1;
+#if defined(SO_NOSIGPIPE)
+        {
+            int one = 1;
+            (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+        }
+#endif
+        return 0;
+#endif
+    }
+
+    static int teapot_accept_transient(void)
+    {
+#ifdef _WIN32
+        int e = WSAGetLastError();
+        return e == WSAECONNABORTED || e == WSAEINTR;
+#else
+        return errno == ECONNABORTED || errno == EINTR
+#ifdef EPROTO
+               || errno == EPROTO
+#endif
+            ;
+#endif
+    }
+
+    static int teapot_accept_resource(void)
+    {
+#ifdef _WIN32
+        int e = WSAGetLastError();
+        return e == WSAEMFILE || e == WSAENOBUFS;
+#else
+        return errno == EMFILE || errno == ENFILE || errno == ENOMEM
+#ifdef ENOBUFS
+               || errno == ENOBUFS
+#endif
+            ;
 #endif
     }
 
@@ -1024,7 +1063,7 @@ extern "C"
         teapot_response res;
         tp_string_builder out;
         size_t out_sent;
-        uint64_t deadline_ms; /* set at init; does not reset */
+        uint64_t deadline_ms; /* recv at init; reset when entering WRITE_RESP */
         int failed;
         int slot_used;
     } teapot_conn;
@@ -1039,6 +1078,15 @@ extern "C"
                 return i;
         }
         return (size_t)-1;
+    }
+
+    static void teapot_conn_arm_send_deadline(teapot_conn *c)
+    {
+#if TEAPOT_SEND_TIMEOUT_MS > 0
+        c->deadline_ms = tp_now_ms() + (uint64_t)TEAPOT_SEND_TIMEOUT_MS;
+#else
+        c->deadline_ms = 0;
+#endif
     }
 
     static teapot_io teapot_conn_begin_400(teapot_conn *c)
@@ -1057,6 +1105,7 @@ extern "C"
         }
         c->failed = 1;
         c->phase = TEAPOT_CONN_WRITE_RESP;
+        teapot_conn_arm_send_deadline(c);
         return TEAPOT_IO_NEED_WRITE;
     }
 
@@ -1085,6 +1134,7 @@ extern "C"
         }
         c->failed = 0;
         c->phase = TEAPOT_CONN_WRITE_RESP;
+        teapot_conn_arm_send_deadline(c);
         return TEAPOT_IO_NEED_WRITE;
     }
 
@@ -1205,14 +1255,7 @@ extern "C"
 
         size_t remaining = c->out.count - c->out_sent;
         int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
-#ifdef _WIN32
-        int n = send(c->fd, c->out.items + c->out_sent, chunk, 0);
-#else
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-        int n = (int)send(c->fd, c->out.items + c->out_sent, (size_t)chunk, MSG_NOSIGNAL);
-#endif
+        int n = teapot_write(c->fd, c->out.items + c->out_sent, chunk);
         if (n < 0)
         {
             if (teapot_would_block())
@@ -1283,9 +1326,10 @@ extern "C"
             }
 
             int timeout_ms = 250;
-#if TEAPOT_RECV_TIMEOUT_MS > 0
+#if TEAPOT_RECV_TIMEOUT_MS > 0 || TEAPOT_SEND_TIMEOUT_MS > 0
             if (c.deadline_ms != 0 &&
-                (c.phase == TEAPOT_CONN_READ_HEAD || c.phase == TEAPOT_CONN_READ_BODY))
+                (c.phase == TEAPOT_CONN_READ_HEAD || c.phase == TEAPOT_CONN_READ_BODY ||
+                 c.phase == TEAPOT_CONN_WRITE_RESP))
             {
                 uint64_t now = tp_now_ms();
                 if (now >= c.deadline_ms)
@@ -1333,9 +1377,10 @@ extern "C"
             }
             if (pr == 0)
             {
-#if TEAPOT_RECV_TIMEOUT_MS > 0
+#if TEAPOT_RECV_TIMEOUT_MS > 0 || TEAPOT_SEND_TIMEOUT_MS > 0
                 if (c.deadline_ms != 0 &&
-                    (c.phase == TEAPOT_CONN_READ_HEAD || c.phase == TEAPOT_CONN_READ_BODY) &&
+                    (c.phase == TEAPOT_CONN_READ_HEAD || c.phase == TEAPOT_CONN_READ_BODY ||
+                     c.phase == TEAPOT_CONN_WRITE_RESP) &&
                     tp_now_ms() >= c.deadline_ms)
                 {
                     teapot_conn_free(&c);
@@ -1948,6 +1993,7 @@ typedef struct
     teapot_conn *slab;
     int max;
     int listen_armed;
+    uint64_t rearm_after_ms; /* 0 = no holdoff; set on resource disarm */
 } tp_run_ctx;
 
 static void tp_run_disarm(tp_run_ctx *ctx)
@@ -1958,18 +2004,36 @@ static void tp_run_disarm(tp_run_ctx *ctx)
     ctx->listen_armed = 0;
 }
 
+static void tp_run_maybe_rearm(tp_run_ctx *ctx, int force)
+{
+    int i;
+    if (ctx->listen_armed)
+        return;
+    if (!force && ctx->rearm_after_ms != 0 && tp_now_ms() < ctx->rearm_after_ms)
+        return;
+    for (i = 0; i < ctx->max; ++i)
+    {
+        if (ctx->slab[i].slot_used)
+            continue;
+        if (tp_wait_add(ctx->w, ctx->listen_sock, TEAPOT_WAIT_IN, NULL) == 0)
+        {
+            ctx->listen_armed = 1;
+            ctx->rearm_after_ms = 0;
+        }
+        return;
+    }
+}
+
 static void tp_run_drop(tp_run_ctx *ctx, teapot_conn *c)
 {
     tp_wait_del(ctx->w, c->fd);
     teapot_conn_free(c);
     teapot_close(c->fd);
     c->slot_used = 0;
-    if (!ctx->listen_armed &&
-        tp_wait_add(ctx->w, ctx->listen_sock, TEAPOT_WAIT_IN, NULL) == 0)
-        ctx->listen_armed = 1;
+    tp_run_maybe_rearm(ctx, 1);
 }
 
-static int tp_run_walk_reads(tp_run_ctx *ctx, int drop)
+static int tp_run_walk_deadlines(tp_run_ctx *ctx, int drop)
 {
     int ms = 250, i;
     uint64_t now = tp_now_ms();
@@ -1979,17 +2043,26 @@ static int tp_run_walk_reads(tp_run_ctx *ctx, int drop)
         uint64_t rem;
         if (!c->slot_used || !c->deadline_ms)
             continue;
-        if (c->phase != TEAPOT_CONN_READ_HEAD && c->phase != TEAPOT_CONN_READ_BODY)
+        if (c->phase != TEAPOT_CONN_READ_HEAD && c->phase != TEAPOT_CONN_READ_BODY &&
+            c->phase != TEAPOT_CONN_WRITE_RESP)
             continue;
         if (now >= c->deadline_ms)
         {
             if (drop)
                 tp_run_drop(ctx, c);
             else
-                return 0;
+                return 1;
             continue;
         }
         rem = c->deadline_ms - now;
+        if (rem < (uint64_t)ms)
+            ms = (int)rem;
+        if (ms < 1)
+            ms = 1;
+    }
+    if (!ctx->listen_armed && ctx->rearm_after_ms != 0 && ctx->rearm_after_ms > now)
+    {
+        uint64_t rem = ctx->rearm_after_ms - now;
         if (rem < (uint64_t)ms)
             ms = (int)rem;
         if (ms < 1)
@@ -2018,8 +2091,13 @@ static void tp_run_accept(tp_run_ctx *ctx)
         client = teapot_listener_accept(ctx->listen_sock);
         if (!teapot_socket_ok(client))
         {
-            if (!teapot_would_block())
+            if (teapot_would_block() || teapot_accept_transient())
+                return;
+            if (teapot_accept_resource())
+            {
                 tp_run_disarm(ctx);
+                ctx->rearm_after_ms = tp_now_ms() + 250;
+            }
             return;
         }
         c = &ctx->slab[slot];
@@ -2070,11 +2148,12 @@ int teapot_run(teapot_server *server)
         return 1;
     }
     memset(slab, 0, (size_t)max * sizeof(*slab));
-    ctx = (tp_run_ctx){server, &w, listen_sock, slab, max, 1};
+    ctx = (tp_run_ctx){server, &w, listen_sock, slab, max, 1, 0};
     while (!server->stop)
     {
-        int n = tp_wait_wait(&w, tp_run_walk_reads(&ctx, 0), ev, 64);
-        tp_run_walk_reads(&ctx, 1);
+        int n = tp_wait_wait(&w, tp_run_walk_deadlines(&ctx, 0), ev, 64);
+        tp_run_walk_deadlines(&ctx, 1);
+        tp_run_maybe_rearm(&ctx, 0);
         if (server->stop)
             break;
         if (n < 0)

@@ -97,6 +97,7 @@ const char *tests_and_examples[] = {
     TEST_DIR "unit_test_request.c",
     TEST_DIR "unit_test_response.c",
     TEST_DIR "unit_test_timeout.c",
+    TEST_DIR "unit_test_send_timeout.c",
     TEST_DIR "unit_test_listen.c",
     TEST_DIR "unit_test_run.c",
 #ifdef __linux__
@@ -115,6 +116,7 @@ static const char *unit_tests[] = {
     BUILD_DIR "unit_test_request",
     BUILD_DIR "unit_test_response",
     BUILD_DIR "unit_test_timeout",
+    BUILD_DIR "unit_test_send_timeout",
     BUILD_DIR "unit_test_listen",
     BUILD_DIR "unit_test_run",
 #ifdef __linux__

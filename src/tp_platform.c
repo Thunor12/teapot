@@ -58,7 +58,43 @@
         int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0)
             return -1;
-        return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 ? 0 : -1;
+        if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0)
+            return -1;
+#if defined(SO_NOSIGPIPE)
+        {
+            int one = 1;
+            (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+        }
+#endif
+        return 0;
+#endif
+    }
+
+    static int teapot_accept_transient(void)
+    {
+#ifdef _WIN32
+        int e = WSAGetLastError();
+        return e == WSAECONNABORTED || e == WSAEINTR;
+#else
+        return errno == ECONNABORTED || errno == EINTR
+#ifdef EPROTO
+               || errno == EPROTO
+#endif
+            ;
+#endif
+    }
+
+    static int teapot_accept_resource(void)
+    {
+#ifdef _WIN32
+        int e = WSAGetLastError();
+        return e == WSAEMFILE || e == WSAENOBUFS;
+#else
+        return errno == EMFILE || errno == ENFILE || errno == ENOMEM
+#ifdef ENOBUFS
+               || errno == ENOBUFS
+#endif
+            ;
 #endif
     }
 

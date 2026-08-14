@@ -92,7 +92,7 @@ Do not close the same fd again.
 
 ## HTTP subset
 
-Request line + headers + `Content-Length` body. No header folding, no chunked encoding, no pipelining. `Transfer-Encoding` is 400. Duplicate `Content-Length` is 400 unless the values parse to the same number. Extra bytes after the body in the first read are 400. Oversize headers and bodies are 400. Client sockets get a recv timeout (`TEAPOT_RECV_TIMEOUT_MS`, default 5000). Responses include `Connection: close`.
+Request line + headers + `Content-Length` body. No header folding, no chunked encoding, no pipelining. `Transfer-Encoding` is 400. Duplicate `Content-Length` is 400 unless the values parse to the same number. Extra bytes after the body in the first read are 400. Oversize headers and bodies are 400. Client sockets get a recv timeout (`TEAPOT_RECV_TIMEOUT_MS`, default 5000) and a send timeout (`TEAPOT_SEND_TIMEOUT_MS`, default 5000). Responses include `Connection: close`. On platforms without `MSG_NOSIGNAL`, accepted sockets get `SO_NOSIGPIPE` so a reset peer cannot kill the process with `SIGPIPE`.
 
 Clang `-Wsign-conversion` is not compatible with this project's `-Werror` flags; `gcc` is the CI compiler.
 
