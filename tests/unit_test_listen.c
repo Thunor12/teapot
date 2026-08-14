@@ -1,8 +1,17 @@
 #define STB_TEAPOT_IMPLEMENTATION
 #include "../stb_teapot.h"
+
+#include <stdio.h>
+
+#ifdef _WIN32
+int main(void)
+{
+    puts("unit_test_listen is POSIX-only for now");
+    return 0;
+}
+#else
 #include <arpa/inet.h>
 #include <pthread.h>
-#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -67,3 +76,4 @@ int main(void)
     test_listen_returns_when_stop_set();
     return failures ? 1 : 0;
 }
+#endif
