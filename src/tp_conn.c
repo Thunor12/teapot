@@ -75,6 +75,8 @@
 #endif
     }
 
+    static teapot_io teapot_conn_write_resp(teapot_conn *c);
+
     static teapot_io teapot_conn_begin_400(teapot_conn *c)
     {
         teapot_response_free(&c->res);
@@ -92,7 +94,7 @@
         c->failed = 1;
         c->phase = TEAPOT_CONN_WRITE_RESP;
         teapot_conn_arm_send_deadline(c);
-        return TEAPOT_IO_NEED_WRITE;
+        return teapot_conn_write_resp(c);
     }
 
     static teapot_io teapot_conn_dispatch(teapot_conn *c)
@@ -117,7 +119,7 @@
         c->failed = 0;
         c->phase = TEAPOT_CONN_WRITE_RESP;
         teapot_conn_arm_send_deadline(c);
-        return TEAPOT_IO_NEED_WRITE;
+        return teapot_conn_write_resp(c);
     }
 
     void teapot_conn_init(teapot_conn *c, teapot_server *server, stb_teapot_socket_t fd)
@@ -145,120 +147,130 @@
         c->out = (tp_string_builder){0};
     }
 
+    static teapot_io teapot_conn_read_body(teapot_conn *c);
+
+    /*
+     * Drain until EAGAIN/WOULDBLOCK. WSAEventSelect (WFMO) FD_READ/FD_WRITE are
+     * edge-triggered: a short recv/send that leaves bytes or send buffer space
+     * will not deliver another event, so one syscall per step hangs until timeout.
+     */
     static teapot_io teapot_conn_read_head(teapot_conn *c)
     {
-        if (c->in_len == (size_t)TEAPOT_CONN_BUF)
-            return teapot_conn_begin_400(c);
-
-        int space = (int)((size_t)TEAPOT_CONN_BUF - c->in_len);
-        int n = (int)recv(c->fd, c->in + c->in_len, (size_t)space, 0);
-        if (n < 0)
-        {
-            if (teapot_would_block())
-                return TEAPOT_IO_NEED_READ;
-            c->failed = 1;
-            c->phase = TEAPOT_CONN_DONE;
-            return TEAPOT_IO_ERROR;
-        }
-        if (n == 0)
-            return teapot_conn_begin_400(c);
-
-        c->in_len += (size_t)n;
-        size_t hend = teapot_find_header_end(c->in, c->in_len);
-        if (hend == (size_t)-1)
+        for (;;)
         {
             if (c->in_len == (size_t)TEAPOT_CONN_BUF)
                 return teapot_conn_begin_400(c);
-            return TEAPOT_IO_NEED_READ;
+
+            int space = (int)((size_t)TEAPOT_CONN_BUF - c->in_len);
+            int n = (int)recv(c->fd, c->in + c->in_len, (size_t)space, 0);
+            if (n < 0)
+            {
+                if (teapot_would_block())
+                    return TEAPOT_IO_NEED_READ;
+                c->failed = 1;
+                c->phase = TEAPOT_CONN_DONE;
+                return TEAPOT_IO_ERROR;
+            }
+            if (n == 0)
+                return teapot_conn_begin_400(c);
+
+            c->in_len += (size_t)n;
+            size_t hend = teapot_find_header_end(c->in, c->in_len);
+            if (hend == (size_t)-1)
+            {
+                if (c->in_len == (size_t)TEAPOT_CONN_BUF)
+                    return teapot_conn_begin_400(c);
+                continue;
+            }
+
+            c->header_end = hend;
+            free_request(&c->req);
+            c->req = (teapot_request){0};
+            size_t content_length = 0;
+            if (parse_request(c->in, c->in_len, &c->req, &content_length) < 0)
+                return teapot_conn_begin_400(c);
+
+            c->body_need = content_length;
+            c->body_got = c->req.body_length;
+            if (c->body_need > (size_t)TEAPOT_MAX_BODY_SIZE)
+                return teapot_conn_begin_400(c);
+
+            if (c->body_got >= c->body_need)
+            {
+                if (c->req.body.count == c->req.body_length)
+                    tp_sb_append_null(&c->req.body);
+                return teapot_conn_dispatch(c);
+            }
+
+            c->phase = TEAPOT_CONN_READ_BODY;
+            return teapot_conn_read_body(c);
         }
-
-        c->header_end = hend;
-        free_request(&c->req);
-        c->req = (teapot_request){0};
-        size_t content_length = 0;
-        if (parse_request(c->in, c->in_len, &c->req, &content_length) < 0)
-            return teapot_conn_begin_400(c);
-
-        c->body_need = content_length;
-        c->body_got = c->req.body_length;
-        if (c->body_need > (size_t)TEAPOT_MAX_BODY_SIZE)
-            return teapot_conn_begin_400(c);
-
-        if (c->body_got >= c->body_need)
-        {
-            if (c->req.body.count == c->req.body_length)
-                tp_sb_append_null(&c->req.body);
-            return teapot_conn_dispatch(c);
-        }
-
-        c->phase = TEAPOT_CONN_READ_BODY;
-        return TEAPOT_IO_NEED_READ;
     }
 
     static teapot_io teapot_conn_read_body(teapot_conn *c)
     {
-        if (c->body_need > (size_t)TEAPOT_MAX_BODY_SIZE)
-            return teapot_conn_begin_400(c);
-
-        char bounce[4096];
-        size_t remaining = c->body_need - c->body_got;
-        size_t to_read = remaining > sizeof(bounce) ? sizeof(bounce) : remaining;
-        int n = (int)recv(c->fd, bounce, to_read, 0);
-        if (n < 0)
+        for (;;)
         {
-            if (teapot_would_block())
-                return TEAPOT_IO_NEED_READ;
-            c->failed = 1;
-            c->phase = TEAPOT_CONN_DONE;
-            return TEAPOT_IO_ERROR;
+            if (c->body_need > (size_t)TEAPOT_MAX_BODY_SIZE)
+                return teapot_conn_begin_400(c);
+
+            if (c->body_got >= c->body_need)
+            {
+                tp_sb_append_null(&c->req.body);
+                return teapot_conn_dispatch(c);
+            }
+
+            char bounce[4096];
+            size_t remaining = c->body_need - c->body_got;
+            size_t to_read = remaining > sizeof(bounce) ? sizeof(bounce) : remaining;
+            int n = (int)recv(c->fd, bounce, to_read, 0);
+            if (n < 0)
+            {
+                if (teapot_would_block())
+                    return TEAPOT_IO_NEED_READ;
+                c->failed = 1;
+                c->phase = TEAPOT_CONN_DONE;
+                return TEAPOT_IO_ERROR;
+            }
+            if (n == 0)
+                return teapot_conn_begin_400(c);
+
+            c->req.body.count = c->req.body_length;
+            tp_sb_append_buf(&c->req.body, bounce, (size_t)n);
+            c->req.body_length += (size_t)n;
+            c->body_got = c->req.body_length;
         }
-        if (n == 0)
-            return teapot_conn_begin_400(c);
-
-        c->req.body.count = c->req.body_length;
-        tp_sb_append_buf(&c->req.body, bounce, (size_t)n);
-        c->req.body_length += (size_t)n;
-        c->body_got = c->req.body_length;
-
-        if (c->body_got < c->body_need)
-            return TEAPOT_IO_NEED_READ;
-
-        tp_sb_append_null(&c->req.body);
-        return teapot_conn_dispatch(c);
     }
 
     static teapot_io teapot_conn_write_resp(teapot_conn *c)
     {
-        if (c->out_sent >= c->out.count)
+        for (;;)
         {
-            c->phase = TEAPOT_CONN_DONE;
-            return TEAPOT_IO_DONE;
-        }
+            if (c->out_sent >= c->out.count)
+            {
+                c->phase = TEAPOT_CONN_DONE;
+                return TEAPOT_IO_DONE;
+            }
 
-        size_t remaining = c->out.count - c->out_sent;
-        int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
-        int n = teapot_write(c->fd, c->out.items + c->out_sent, chunk);
-        if (n < 0)
-        {
-            if (teapot_would_block())
-                return TEAPOT_IO_NEED_WRITE;
-            c->failed = 1;
-            c->phase = TEAPOT_CONN_DONE;
-            return TEAPOT_IO_ERROR;
+            size_t remaining = c->out.count - c->out_sent;
+            int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+            int n = teapot_write(c->fd, c->out.items + c->out_sent, chunk);
+            if (n < 0)
+            {
+                if (teapot_would_block())
+                    return TEAPOT_IO_NEED_WRITE;
+                c->failed = 1;
+                c->phase = TEAPOT_CONN_DONE;
+                return TEAPOT_IO_ERROR;
+            }
+            if (n == 0)
+            {
+                c->failed = 1;
+                c->phase = TEAPOT_CONN_DONE;
+                return TEAPOT_IO_ERROR;
+            }
+            c->out_sent += (size_t)n;
         }
-        if (n == 0)
-        {
-            c->failed = 1;
-            c->phase = TEAPOT_CONN_DONE;
-            return TEAPOT_IO_ERROR;
-        }
-        c->out_sent += (size_t)n;
-        if (c->out_sent >= c->out.count)
-        {
-            c->phase = TEAPOT_CONN_DONE;
-            return TEAPOT_IO_DONE;
-        }
-        return TEAPOT_IO_NEED_WRITE;
     }
 
     teapot_io teapot_conn_step(teapot_conn *c)
