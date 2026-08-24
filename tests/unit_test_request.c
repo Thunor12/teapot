@@ -581,6 +581,8 @@ static void test_conn_step_drains_body_past_header_buf(void)
     teapot_close(sockets[0]);
     teapot_close(sockets[1]);
 }
+
+static void test_pipelined_leftover_rejected(void)
 {
     char response[512];
     teapot_route routes[] = {
