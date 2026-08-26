@@ -18,6 +18,7 @@
   <header class="chrome">
     <a class="chrome-brand" href="../index.html">teapot</a>
     <nav class="chrome-nav" aria-label="Primary">
+      <a href="../guide/index.html">Guide</a>
       <a href="index.html" aria-current="page">API</a>
       <a href="../wait/index.html">Wait</a>
     </nav>
@@ -67,31 +68,12 @@
     </section>
 
     <section class="section">
-      <h2>Complete <code>teapot_listen</code> ping</h2>
-      <p>Copyable main: <code>GET /ping</code> returns JSON on loopback.</p>
-<pre><code>#define STB_TEAPOT_IMPLEMENTATION
-#include "stb_teapot.h"
-
-static teapot_response ping(const teapot_request *req)
-{
-    (void)req;
-    return teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
-}
-
-int main(void)
-{
-    teapot_route routes[] = {
-        {TEAPOT_GET, "/ping", ping},
-    };
-    teapot_server server = {
-        .port = 8080,
-        .routes = routes,
-        .route_count = 1,
-        .bind_host = "127.0.0.1",
-    };
-    return teapot_listen(&amp;server);
-}</code></pre>
-      <p class="muted"><code>curl http://127.0.0.1:8080/ping</code> → <code>{"ok":true}</code>.</p>
+      <h2>First program</h2>
+      <p>
+        The copy-paste <code>teapot_listen</code> ping lives in the
+        <a href="../guide/index.html">Guide</a>.
+        This section is reference: routes, responses, and limits.
+      </p>
     </section>
   </main>
 
