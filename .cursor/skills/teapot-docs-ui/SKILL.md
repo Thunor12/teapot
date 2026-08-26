@@ -11,7 +11,8 @@ description: >-
 ## Intent
 
 Interactive documentation for teapot: modern, bold, trustworthy. Teaches the
-common API and wait backends. Not a marketing site and not a dashboard.
+onramp (Guide), common API, and wait backends. Not a marketing site and not a
+dashboard.
 
 ## Theme
 
@@ -67,12 +68,13 @@ surfaces, high contrast. Serious C systems tool — not a SaaS template.
 ## Layout rules
 
 - Brand first: “teapot” is hero-level on landing; inner pages carry brand in nav.
-- Landing chrome: **theme toggle only** (hero owns API | Wait CTAs).
-- Inner chrome: `teapot` + API + Wait + toggle.
+- Landing chrome: **theme toggle only** (hero owns **Guide (primary) · API · Wait**).
+- Inner chrome: `teapot` + **Guide · API · Wait** + toggle.
 - One job per section: one headline, one short supporting sentence.
 - Cards only for live fragment toys. Wait comparison = table/snippet, not a card.
 - Full-bleed atmosphere OK; no inset hero image cards.
 - Narrow: stack CTAs; code blocks `overflow-x: auto` without page overflow.
+- Guide is prose + one primary code sample — not a dashboard; keep toys on API/Wait.
 
 ## Accessibility
 

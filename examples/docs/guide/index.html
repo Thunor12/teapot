@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guide — teapot</title>
+  <link rel="stylesheet" href="../css/theme.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("teapot-docs-theme");
+        if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="chrome">
+    <a class="chrome-brand" href="../index.html">teapot</a>
+    <nav class="chrome-nav" aria-label="Primary">
+      <a href="index.html" aria-current="page">Guide</a>
+      <a href="../api/index.html">API</a>
+      <a href="../wait/index.html">Wait</a>
+    </nav>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to light theme">Light</button>
+  </header>
+
+  <main class="page">
+    <h1>Guide</h1>
+    <p class="lede">Get a working <code>teapot_listen</code> server in a few minutes. API and Wait cover the rest.</p>
+
+    <section class="section">
+      <h2>1. Get the header</h2>
+      <p>Use amalgamated <code>stb_teapot.h</code> from this repo. From the repo root:</p>
+<pre><code>./nob</code></pre>
+      <p class="muted">That regenerates <code>stb_teapot.h</code> and runs tests. For these interactive docs only: <code>./nob doc</code>.</p>
+    </section>
+
+    <section class="section">
+      <h2>2. Minimal listen server</h2>
+      <p>One <code>GET /ping</code> handler on loopback. Bind host is dotted IPv4 — use <code>"127.0.0.1"</code>, not <code>"localhost"</code>.</p>
+<pre><code>#define STB_TEAPOT_IMPLEMENTATION
+#include "stb_teapot.h"
+
+static teapot_response ping(const teapot_request *req)
+{
+    (void)req;
+    return teapot_json(TEAPOT_HTTP_OK, "{\"ok\":true}");
+}
+
+int main(void)
+{
+    teapot_route routes[] = {
+        {TEAPOT_GET, "/ping", ping},
+    };
+    teapot_server server = {
+        .port = 8080,
+        .routes = routes,
+        .route_count = 1,
+        .bind_host = "127.0.0.1",
+    };
+    return teapot_listen(&amp;server);
+}</code></pre>
+      <p class="muted"><code>curl http://127.0.0.1:8080/ping</code> → <code>{"ok":true}</code>.</p>
+    </section>
+
+    <section class="section">
+      <h2>3. Next steps</h2>
+      <p>
+        One client at a time → keep <code>teapot_listen</code>.
+        Overlapping I/O on one thread → <a href="../wait/index.html">Wait</a> (<code>teapot_run</code> + a wait backend).
+      </p>
+      <p>
+        Routes, response helpers, and limits live under
+        <a href="../api/index.html">API</a>.
+      </p>
+    </section>
+  </main>
+
+  <script src="../js/theme.js"></script>
+  <script src="../vendor/htmx.min.js"></script>
+</body>
+</html>
