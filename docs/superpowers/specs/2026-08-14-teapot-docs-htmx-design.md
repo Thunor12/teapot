@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14  
 **Status:** Ready for implementation planning (expert nits incorporated)  
-**Source idea:** `ideas.md` — htmx demos per wait backend + common API docs
+**Source idea:** [`docs/superpowers/ideas.md`](../ideas.md) — htmx demos per wait backend + common API docs
 
 ## Goal
 
@@ -12,7 +12,7 @@ Ship:
 2. **Interactive documentation** as five wait-specific binaries sharing one app: common API docs + “this wait backend” docs, offline, with vendored htmx.
 3. Docs UI that is **modern, bold, trustworthy** — **dark by default**, with a light/dark toggle.
 
-Non-goals (parked in `ideas.md`): templates engine, keep-alive, CDN htmx, disk-serve DEV mode.
+Non-goals (parked in [`docs/superpowers/ideas.md`](../ideas.md)): templates engine, keep-alive, CDN htmx, disk-serve DEV mode.
 
 ## Success criteria
 

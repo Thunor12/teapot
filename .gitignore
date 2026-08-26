@@ -5,3 +5,4 @@ build
 
 *.exe
 *.exe.old
+compile_commands.json
