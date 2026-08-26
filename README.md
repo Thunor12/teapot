@@ -36,17 +36,18 @@ Also `teapot_text` and `teapot_bytes`. Full example: `examples/basic_server.c`.
 
 ## Interactive docs
 
-Offline HTML docs (dark by default; theme toggle for light) ship as wait-specific binaries. Edit `examples/docs/`, run `./nob` (regenerates `build/docs_embed.h` when stale), then start one binary:
+From the **repo root**, ensure-build and open the platform-default docs server:
 
 ```sh
-./build/teapot_docs_poll          # POSIX poll (Linux and other Unix)
-./build/teapot_docs_epoll         # Linux only
-# ./build/teapot_docs_kqueue      # macOS / BSD
-# ./build/teapot_docs_wsapoll.exe # Windows
-# ./build/teapot_docs_wfmo.exe    # Windows (64-socket cap)
+./nob doc
 ```
 
-Open `http://127.0.0.1:8080/` (override with `TEAPOT_DEMO_PORT`, integer **1..65535**). Assets and **htmx 2.0.4** are embedded — no CDN. `./nob` builds OS-gated `teapot_docs_*` binaries but does **not** run them in the unit-test loop (they are blocking servers).
+That amalgamates, embeds `examples/docs/`, compiles the default wait binary for this OS (Linux → epoll, macOS/BSD → kqueue, other POSIX → poll, Windows → WSAPoll), then process-replaces into it. Open `http://127.0.0.1:8080/` (override with `TEAPOT_DEMO_PORT`, integer **1..65535**). Assets and **htmx 2.0.4** are embedded — no CDN.
+
+- **CI / correctness:** `./nob` (amalgamate, all tests, all OS-gated docs binaries).
+- **Interactive docs:** `./nob doc` (does **not** run the unit-test suite).
+
+Non-default backends (e.g. `poll` on Linux, WFMO on Windows) remain under `build/` after a full `./nob` if you want to launch them by hand.
 
 ## `teapot_listen` vs `teapot_run`
 

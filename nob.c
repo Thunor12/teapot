@@ -2,8 +2,11 @@
 #include "third_party/nob/nob.h"
 
 #ifdef _WIN32
+#include <process.h>
 #define CC "gcc.exe"
 #else
+#include <errno.h>
+#include <unistd.h>
 #define CC "gcc"
 #endif
 
@@ -184,7 +187,7 @@ defer:
     return ret;
 }
 
-/* OS-gated interactive docs binaries. Compiled but never run from ./nob. */
+/* OS-gated interactive docs binaries. Full ./nob builds all; ./nob doc runs default only. */
 static const char *docs_examples[] = {
 #ifdef __linux__
     EXAMPLE_DIR "teapot_docs_epoll.c",
@@ -201,6 +204,76 @@ static const char *docs_examples[] = {
     EXAMPLE_DIR "teapot_docs_wfmo.c",
 #endif
 };
+
+typedef struct
+{
+    const char *src;
+    const char *out;
+    const char *wait_name;
+} Docs_Default;
+
+/* Single map: compile path and exec path must stay identical. */
+static Docs_Default docs_platform_default(void)
+{
+#if defined(__linux__)
+    return (Docs_Default){
+        EXAMPLE_DIR "teapot_docs_epoll.c",
+        BUILD_DIR "teapot_docs_epoll",
+        "epoll",
+    };
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+    defined(__DragonFly__)
+    return (Docs_Default){
+        EXAMPLE_DIR "teapot_docs_kqueue.c",
+        BUILD_DIR "teapot_docs_kqueue",
+        "kqueue",
+    };
+#elif defined(_WIN32)
+    return (Docs_Default){
+        EXAMPLE_DIR "teapot_docs_wsapoll.c",
+        BUILD_DIR "teapot_docs_wsapoll.exe",
+        "wsapoll",
+    };
+#else
+    return (Docs_Default){
+        EXAMPLE_DIR "teapot_docs_poll.c",
+        BUILD_DIR "teapot_docs_poll",
+        "poll",
+    };
+#endif
+}
+
+static int docs_demo_port(void)
+{
+    const char *e = getenv("TEAPOT_DEMO_PORT");
+    char *end = NULL;
+    unsigned long v;
+
+    if (e == NULL || e[0] == '\0')
+        return 8080;
+
+    v = strtoul(e, &end, 10);
+    if (end == e || *end != '\0' || v < 1ul || v > 65535ul)
+    {
+        nob_log(NOB_ERROR, "TEAPOT_DEMO_PORT must be an integer 1..65535 (got %s)", e);
+        return -1;
+    }
+    return (int)v;
+}
+
+static int compile_one_docs(const char *src, const char *out)
+{
+    const char *deps[] = {
+        "stb_teapot.h",
+        DOCS_EMBED_OUT,
+        EXAMPLE_DIR "docs_app.h",
+    };
+    if (0 != compile_exe(&src, 1, deps, NOB_ARRAY_LEN(deps), out, 1))
+        return 1;
+    if (!nob_procs_flush(&procs))
+        return 1;
+    return 0;
+}
 
 static int compile_docs_examples(void)
 {
@@ -423,6 +496,37 @@ defer:
 
 #include "nob_embed.c"
 
+static int run_doc(void)
+{
+    Docs_Default def = docs_platform_default();
+    int port;
+    char *exec_argv[2];
+
+    if (0 != amalgamate())
+        return 1;
+    if (0 != embed_if_stale(DOCS_EMBED_SRC, DOCS_EMBED_OUT))
+        return 1;
+    if (0 != compile_one_docs(def.src, def.out))
+        return 1;
+
+    port = docs_demo_port();
+    if (port < 0)
+        return 1;
+
+    nob_log(NOB_INFO, "docs backend=%s binary=%s", def.wait_name, def.out);
+    nob_log(NOB_INFO, "open http://127.0.0.1:%d/  (TEAPOT_DEMO_PORT overrides; run from repo root)", port);
+    nob_log(NOB_INFO, "Press Ctrl+C to stop.");
+
+    exec_argv[0] = (char *)def.out;
+    exec_argv[1] = NULL;
+#ifdef _WIN32
+    _execv(def.out, exec_argv);
+#else
+    execv(def.out, exec_argv);
+#endif
+    nob_log(NOB_ERROR, "failed to exec %s (run ./nob doc from the teapot repo root): %s", def.out, strerror(errno));
+    return 1;
+}
 
 static int run_fuzz(int argc, char **argv)
 {
@@ -546,6 +650,12 @@ int main(int argc, char **argv)
             goto defer;
         }
         ret = run_fuzz(argc, argv);
+        goto defer;
+    }
+
+    if (argc > 0 && 0 == strcmp(argv[0], "doc"))
+    {
+        ret = run_doc();
         goto defer;
     }
 
