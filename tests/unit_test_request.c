@@ -12,6 +12,7 @@ int main(void)
 }
 #else
 #include <pthread.h>
+#include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -529,6 +530,58 @@ static void test_request_user_copied_from_server(void)
     ok("request user copied from server", observed_user == &marker);
 }
 
+static void test_conn_step_drains_body_past_header_buf(void)
+{
+    enum
+    {
+        BODY_N = 9000
+    };
+    stb_teapot_socket_t sockets[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
+    {
+        ok("drain socketpair", 0);
+        return;
+    }
+
+    char hdr[128];
+    int hdr_n = snprintf(hdr, sizeof(hdr), "POST /echo HTTP/1.1\r\nContent-Length: %d\r\n\r\n", BODY_N);
+    char *body = malloc(BODY_N);
+    if (hdr_n <= 0 || hdr_n >= (int)sizeof(hdr) || body == NULL)
+    {
+        ok("drain request alloc", 0);
+        free(body);
+        teapot_close(sockets[0]);
+        teapot_close(sockets[1]);
+        return;
+    }
+    memset(body, 'x', BODY_N);
+    ok("drain wrote request",
+       write_all_raw(sockets[1], hdr, (size_t)hdr_n) == 0 && write_all_raw(sockets[1], body, BODY_N) == 0);
+    shutdown(sockets[1], SHUT_WR);
+    free(body);
+
+    teapot_route routes[] = {
+        {TEAPOT_POST, "/echo", recording_handler},
+    };
+    teapot_server server = {
+        .port = 0,
+        .routes = routes,
+        .route_count = 1,
+    };
+
+    reset_observed();
+    teapot_conn c;
+    teapot_conn_init(&c, &server, sockets[0]);
+    teapot_io io = teapot_conn_step(&c);
+    ok("drain one step finishes read", io == TEAPOT_IO_DONE || io == TEAPOT_IO_NEED_WRITE);
+    ok("drain reaches handler in one step", handler_called == 1);
+    ok("drain body length", observed_body_length == (size_t)BODY_N);
+    ok("drain body prefix", observed_body[0] == 'x');
+    teapot_conn_free(&c);
+    teapot_close(sockets[0]);
+    teapot_close(sockets[1]);
+}
+
 static void test_pipelined_leftover_rejected(void)
 {
     char response[512];
@@ -564,6 +617,7 @@ int main(void)
     test_duplicate_content_length_identical_ok();
     test_query_string_matches_exact_route();
     test_request_user_copied_from_server();
+    test_conn_step_drains_body_past_header_buf();
     test_pipelined_leftover_rejected();
 
     if (failures == 0)
