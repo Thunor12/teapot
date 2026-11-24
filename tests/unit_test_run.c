@@ -2,7 +2,9 @@
 #define STB_TEAPOT_IMPLEMENTATION
 #include "../stb_teapot.h"
 
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
 int main(void)
@@ -261,6 +263,121 @@ static void test_run_rearms_listen_after_emfile(void)
     (void)setrlimit(RLIMIT_NOFILE, &saved);
 }
 
+static char trail_body[100000];
+
+static teapot_response trail_handler(const teapot_request *req)
+{
+    (void)req;
+    memset(trail_body, 'Q', sizeof(trail_body));
+    return teapot_bytes(TEAPOT_HTTP_OK, "application/octet-stream", trail_body, sizeof(trail_body));
+}
+
+/* Split the body so the second packet also carries bytes past Content-Length.
+ * Those bytes used to sit unread until close(), which RSTs and drops the
+ * response still in the send buffer. */
+static int trail_exchange(int fd, size_t *out_body, int *out_reset)
+{
+    const char *part1 = "POST /up HTTP/1.1\r\nContent-Length: 10\r\n\r\nhello";
+    const char *part2 = "worldGET /next HTTP/1.1\r\n\r\n";
+    char *buf;
+    size_t got = 0;
+    struct timespec gap = {.tv_sec = 0, .tv_nsec = 100000000L};
+    struct timespec settle = {.tv_sec = 0, .tv_nsec = 500000000L};
+    char *sep;
+    size_t i;
+
+    *out_body = 0;
+    *out_reset = 0;
+    if (write(fd, part1, strlen(part1)) != (ssize_t)strlen(part1))
+        return -1;
+    nanosleep(&gap, NULL);
+    if (write(fd, part2, strlen(part2)) != (ssize_t)strlen(part2))
+        return -1;
+    nanosleep(&settle, NULL);
+
+    buf = malloc(sizeof(trail_body) + 4096);
+    if (!buf)
+        return -1;
+    for (;;)
+    {
+        ssize_t n = read(fd, buf + got, sizeof(trail_body) + 4096 - got);
+        if (n == 0)
+            break;
+        if (n < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            if (errno == ECONNRESET)
+                *out_reset = 1;
+            break;
+        }
+        got += (size_t)n;
+        if (got >= sizeof(trail_body) + 4096)
+            break;
+    }
+    sep = NULL;
+    for (i = 0; i + 3 < got; ++i)
+    {
+        if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n')
+        {
+            sep = buf + i;
+            break;
+        }
+    }
+    if (sep)
+        *out_body = got - (size_t)(sep + 4 - buf);
+    else
+        *out_body = 0;
+    free(buf);
+    return sep && *out_body == sizeof(trail_body) ? 0 : -1;
+}
+
+static void test_run_delivers_response_past_trailing_bytes(void)
+{
+    teapot_route routes[] = {{TEAPOT_POST, "/up", trail_handler}};
+    teapot_server srv = {
+        .bind_host = "127.0.0.1",
+        .port = 0,
+        .routes = routes,
+        .route_count = 1,
+        .max_conns = 2,
+    };
+    struct run_ctx ctx = {.s = &srv, .rc = -99};
+    pthread_t th;
+    int i, port = 0, fd, reset = 0;
+    size_t body = 0;
+    struct sockaddr_in a;
+
+    ok("trail thread", pthread_create(&th, NULL, run_thread, &ctx) == 0);
+    for (i = 0; i < 100 && (port = srv.port) == 0; ++i)
+    {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 10000000L};
+        nanosleep(&ts, NULL);
+    }
+    ok("trail port", port != 0);
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    {
+        int rcv = 1024;
+        if (fd >= 0)
+            (void)setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
+    }
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_port = htons((uint16_t)port);
+    inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+    ok("trail connect", fd >= 0 && connect(fd, (struct sockaddr *)&a, sizeof(a)) == 0);
+    ok("trail exchange", fd >= 0 && trail_exchange(fd, &body, &reset) == 0);
+    ok("trail no short reset", reset == 0);
+    ok("trail full body", body == sizeof(trail_body));
+    if (fd >= 0)
+        close(fd);
+
+    teapot_request_stop(&srv);
+    pthread_join(th, NULL);
+    ok("trail run returned 0", ctx.rc == 0);
+}
+
 static void test_sigpipe_on_early_peer_close(void)
 {
     stb_teapot_socket_t fds[2];
@@ -282,6 +399,7 @@ int main(void)
     test_run_port0_ping_then_stop();
     test_run_survives_accept_rst_storm();
     test_run_rearms_listen_after_emfile();
+    test_run_delivers_response_past_trailing_bytes();
     test_sigpipe_on_early_peer_close();
     return failures ? 1 : 0;
 }

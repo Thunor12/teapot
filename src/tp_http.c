@@ -294,6 +294,7 @@
     int teapot_handle_client_connection(teapot_server *server, stb_teapot_socket_t client)
     {
         int rc = teapot_serve_client(server, client);
+        teapot_discard_unread(client);
         teapot_close(client);
         return rc;
     }
