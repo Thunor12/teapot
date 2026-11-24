@@ -45,6 +45,7 @@ static void tp_run_drop(tp_run_ctx *ctx, teapot_conn *c)
 {
     tp_wait_del(ctx->w, c->fd);
     teapot_conn_free(c);
+    teapot_discard_unread(c->fd);
     teapot_close(c->fd);
     c->slot_used = 0;
     tp_run_maybe_rearm(ctx, 1);
@@ -201,6 +202,7 @@ int teapot_run(teapot_server *server)
             continue;
         tp_wait_del(&w, slab[i].fd);
         teapot_conn_free(&slab[i]);
+        teapot_discard_unread(slab[i].fd);
         teapot_close(slab[i].fd);
     }
     TP_FREE(slab);

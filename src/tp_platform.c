@@ -40,6 +40,36 @@
 #endif
     }
 
+    /* Read and drop bytes already queued on a client socket.
+     * close() with unread input aborts the TCP connection (RST) and the kernel
+     * discards response bytes still in the send buffer. That happens when the
+     * peer sends past Content-Length after the body read has already returned:
+     * the handler runs, the response is buffered, then close wipes it.
+     * MSG_DONTWAIT / FIONREAD so a blocking caller cannot hang here. */
+    static void teapot_discard_unread(stb_teapot_socket_t s)
+    {
+        char buf[4096];
+        int spins = 0;
+
+        while (spins++ < 2048)
+        {
+            int n;
+
+#ifdef _WIN32
+            u_long avail = 0;
+            int chunk;
+            if (ioctlsocket(s, FIONREAD, &avail) != 0 || avail == 0)
+                break;
+            chunk = avail > (u_long)sizeof(buf) ? (int)sizeof(buf) : (int)avail;
+            n = recv(s, buf, chunk, 0);
+#else
+            n = (int)recv(s, buf, sizeof(buf), MSG_DONTWAIT);
+#endif
+            if (n <= 0)
+                break;
+        }
+    }
+
     /* One listener per process is the supported model on Windows (WSAStartup in listener_open). */
     void teapot_listener_close(stb_teapot_socket_t listen_sock)
     {
